@@ -1,0 +1,57 @@
+services:
+  nhmesh-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nhmesh-producer
+    restart: unless-stopped
+    ports:
+      - "5001:5001" # Web interface
+    environment:
+      # Required environment variables
+      - NODE_IP=${NODE_IP:-192.168.1.100}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+
+      # Optional environment variables with defaults
+      - MQTT_ENDPOINT=${MQTT_ENDPOINT:-mqtt.nhmesh.live}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_TOPIC=${MQTT_TOPIC:-msh/US/NH/}
+      - WEB_HOST=${WEB_HOST:-0.0.0.0}
+      - WEB_PORT=${WEB_PORT:-5001}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+      # Web interface configuration
+      - WEB_INTERFACE_ENABLED=${WEB_INTERFACE_ENABLED:-true}
+    volumes:
+      # Optional: Mount logs directory for persistent logging
+      - ./logs:/app/logs
+    networks:
+      - nhmesh-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Add a simple MQTT broker for testing
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: nhmesh-mqtt-broker
+    restart: unless-stopped
+    ports:
+      - "1883:1883" # MQTT
+      - "9001:9001" # WebSocket
+    volumes:
+      - ./docker/mosquitto/config:/mosquitto/config
+      - ./docker/mosquitto/data:/mosquitto/data
+      - ./docker/mosquitto/log:/mosquitto/log
+    networks:
+      - nhmesh-network
+    profiles:
+      - test # Only start when testing locally
+
+networks:
+  nhmesh-network:
+    driver: bridge

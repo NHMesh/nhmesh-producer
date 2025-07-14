@@ -2,6 +2,51 @@
 
 A resilient Meshtastic MQTT producer with automatic reconnection and connection health monitoring. This standalone producer handles the connection to Meshtastic nodes and publishes received packets to an MQTT broker with enhanced error handling and recovery mechanisms.
 
+## Running with Docker
+
+```bash
+docker run -d \
+    --name nhmesh-producer \
+    -e NODE_IP=192.168.1.100 \
+    -e MQTT_USERNAME=your_username \
+    -e MQTT_PASSWORD=your_password \
+    -p 5001:5001 \
+    ghcr.io/nhmesh/producer:latest
+```
+
+After starting the container, access the web interface at: `http://localhost:5001`
+
+## Configuration
+
+### Environment Variables
+
+| Variable        | Description                | Default            |
+| --------------- | -------------------------- | ------------------ |
+| `MQTT_ENDPOINT` | MQTT broker address        | `mqtt.nhmesh.live` |
+| `MQTT_PORT`     | MQTT broker port           | `1883`             |
+| `MQTT_TOPIC`    | Root MQTT topic            | `msh/US/NH/`       |
+| `MQTT_USERNAME` | MQTT username              | Required           |
+| `MQTT_PASSWORD` | MQTT password              | Required           |
+| `NODE_IP`       | Meshtastic node IP address | Required           |
+| `WEB_HOST`      | Web interface host         | `0.0.0.0`          |
+| `WEB_PORT`      | Web interface port         | `5001`             |
+| `LOG_LEVEL`     | Logging level              | `INFO`             |
+
+### Command Line Options
+
+```bash
+python -m nhmesh_producer.producer \
+    --broker mqtt.nhmesh.live \
+    --port 1883 \
+    --topic msh/US/NH/ \
+    --username your_username \
+    --password your_password \
+    --node-ip 192.168.1.100 \
+    --web-interface \
+    --web-host 0.0.0.0 \
+    --web-port 5001
+```
+
 ## Features
 
 ### 🔄 **Automatic Reconnection**
@@ -53,37 +98,6 @@ poetry install
 pip install -r requirements.txt
 ```
 
-## Configuration
-
-### Environment Variables
-
-| Variable        | Description                | Default            |
-| --------------- | -------------------------- | ------------------ |
-| `MQTT_ENDPOINT` | MQTT broker address        | `mqtt.nhmesh.live` |
-| `MQTT_PORT`     | MQTT broker port           | `1883`             |
-| `MQTT_TOPIC`    | Root MQTT topic            | `msh/US/NH/`       |
-| `MQTT_USERNAME` | MQTT username              | Required           |
-| `MQTT_PASSWORD` | MQTT password              | Required           |
-| `NODE_IP`       | Meshtastic node IP address | Required           |
-| `WEB_HOST`      | Web interface host         | `0.0.0.0`          |
-| `WEB_PORT`      | Web interface port         | `5001`             |
-| `LOG_LEVEL`     | Logging level              | `INFO`             |
-
-### Command Line Options
-
-```bash
-python -m nhmesh_producer.producer \
-    --broker mqtt.nhmesh.live \
-    --port 1883 \
-    --topic msh/US/NH/ \
-    --username your_username \
-    --password your_password \
-    --node-ip 192.168.1.100 \
-    --web-interface \
-    --web-host 0.0.0.0 \
-    --web-port 5001
-```
-
 ## Usage
 
 ### Basic Usage
@@ -96,7 +110,9 @@ python -m nhmesh_producer.producer --node-ip 192.168.1.100
 python -m nhmesh_producer.producer --node-ip 192.168.1.100 --no-web-interface
 ```
 
-### Docker Usage
+### Building Docker Image Locally
+
+If you want to build the Docker image yourself instead of using the pre-built image:
 
 ```bash
 # Build the image

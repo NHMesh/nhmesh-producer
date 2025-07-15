@@ -187,7 +187,7 @@ class MeshtasticMQTTHandler:
         # --- Traceroute Daemon Feature ---
         self._node_cache = {}  # node_id -> {"position": (lat, lon, alt), "long_name": str}
         self._last_traceroute_time = {}
-        self._TRACEROUTE_INTERVAL = 3 * 60 * 60  # 3 hours
+        self._TRACEROUTE_INTERVAL = 24 * 60 * 60  # 24 hours (once per day)
         self._traceroute_queue = queue.Queue()
         self._traceroute_worker_thread = threading.Thread(target=self._traceroute_worker, daemon=True)
         self._traceroute_worker_thread.start()
@@ -197,6 +197,10 @@ class MeshtasticMQTTHandler:
         self._pending_traceroutes = {}  # node_id -> {"timestamp": time, "retries": int, "max_wait": time}
         self._traceroute_replies = {}  # node_id -> reply_data
         self._traceroute_lock = threading.Lock()
+        
+        # --- Rate Limiting ---
+        self._last_global_traceroute_time = 0  # Track last global traceroute time
+        self._MIN_TRACEROUTE_INTERVAL = 5 * 60  # Minimum 5 minutes between any traceroute requests
         
         # --- Traceroute Metrics Tracking ---
         self._total_traceroutes_sent = 0
@@ -815,16 +819,29 @@ class MeshtasticMQTTHandler:
             user = self.connection_manager.get_interface().nodes[node_id].get("user", {})
             if user:
                 entry["long_name"] = user.get("longName") or entry["long_name"]
-        # Enqueue traceroute for new nodes
+        # Enqueue traceroute for new nodes (with rate limiting)
         if is_new_node:
-            logging.info(f"[Traceroute] New node discovered: {node_id}, enqueuing traceroute job.")
-            self._traceroute_queue.put((node_id, 0))  # 0 retries so far
-        # Periodic re-traceroute
+            now = time.time()
+            if now - self._last_global_traceroute_time >= self._MIN_TRACEROUTE_INTERVAL:
+                logging.info(f"[Traceroute] New node discovered: {node_id}, enqueuing traceroute job.")
+                self._traceroute_queue.put((node_id, 0))  # 0 retries so far
+                # Mark this node as having been tracerouted
+                self._last_traceroute_time[node_id] = now
+                self._last_global_traceroute_time = now
+            else:
+                logging.info(f"[Traceroute] New node discovered: {node_id}, but rate limiting prevents traceroute (last global traceroute was {now - self._last_global_traceroute_time:.1f}s ago)")
+        
+        # Periodic re-traceroute (once per day per node, with rate limiting)
         now = time.time()
         last_time = self._last_traceroute_time.get(node_id, 0)
-        if now - last_time > self._TRACEROUTE_INTERVAL:
-            logging.info(f"[Traceroute] Periodic traceroute needed for node {node_id}, enqueuing job.")
-            self._traceroute_queue.put((node_id, 0))
+        if last_time > 0 and now - last_time > self._TRACEROUTE_INTERVAL:
+            if now - self._last_global_traceroute_time >= self._MIN_TRACEROUTE_INTERVAL:
+                logging.info(f"[Traceroute] Daily traceroute needed for node {node_id}, enqueuing job.")
+                self._traceroute_queue.put((node_id, 0))
+                self._last_traceroute_time[node_id] = now
+                self._last_global_traceroute_time = now
+            else:
+                logging.info(f"[Traceroute] Daily traceroute needed for node {node_id}, but rate limiting prevents it (last global traceroute was {now - self._last_global_traceroute_time:.1f}s ago)")
 
     def _run_traceroute(self, node_id):
         node_id = str(node_id)  # Ensure node_id is always a string
@@ -857,7 +874,7 @@ class MeshtasticMQTTHandler:
             result = [None]
             def target():
                 try:
-                    self.connection_manager.get_interface().sendTraceRoute(dest=node_id, hopLimit=10)
+                    self.connection_manager.get_interface().sendTraceRoute(dest=node_id, hopLimit=7)
                     result[0] = True
                 except Exception as e:
                     import traceback
@@ -930,12 +947,13 @@ class MeshtasticMQTTHandler:
                 logging.info(f"[Traceroute] Worker picked up job for node {node_id}, attempt {retries+1}.")
                 success = self._run_traceroute(node_id)
                 if not success:
-                    if retries < 2:  # Retry up to 2 times
-                        logging.warning(f"[Traceroute] Failed to traceroute node {node_id}, retrying in 10 seconds... (attempt {retries+1}/3)")
+                    # Only retry once (reduced from 2 retries)
+                    if retries < 1:
+                        logging.warning(f"[Traceroute] Failed to traceroute node {node_id}, retrying in 10 seconds... (attempt {retries+1}/2)")
                         time.sleep(10)
                         self._traceroute_queue.put((node_id, retries + 1))
                     else:
-                        logging.error(f"[Traceroute] Failed to traceroute node {node_id} after 3 attempts.")
+                        logging.error(f"[Traceroute] Failed to traceroute node {node_id} after 2 attempts.")
                 else:
                     logging.info(f"[Traceroute] Traceroute for node {node_id} completed successfully.")
                 

@@ -10,14 +10,13 @@ import sys
 import signal
 import paho.mqtt.client as mqtt
 import json
-import meshtastic
-import meshtastic.tcp_interface
 from pubsub import pub
 import argparse
 from utils.envdefault import EnvDefault
 from utils.traceroute_manager import TracerouteManager
 from utils.node_cache import NodeCache
-import time
+from utils.connection_manager import ConnectionManager
+import atexit
 
 
 logging.basicConfig(
@@ -49,7 +48,7 @@ class MeshtasticMQTTHandler:
     def __init__(self, broker, port, topic, tls, username, password, node_ip, traceroute_cooldown=30, 
                  traceroute_interval=10800, traceroute_max_retries=5, traceroute_max_backoff=86400, traceroute_persistence_file='/tmp/traceroute_state.json'):
         """
-        Initializes the MeshtasticMQTTHandler.
+        Initializes the MeshtasticMQTTHandler with improved connection management.
         """
         self.broker = broker
         self.port = port
@@ -58,28 +57,35 @@ class MeshtasticMQTTHandler:
         self.username = username
         self.password = password
         self.node_ip = node_ip
-        self.max_reconnect_attempts = 5
-        self.reconnect_delay = 5  # seconds
         
+        # Initialize connection manager
+        self.connection_manager = ConnectionManager(node_ip)
+        
+        # MQTT client setup with callbacks
         self.mqtt_client = mqtt.Client()
         self.mqtt_client.username_pw_set(username=self.username, password=self.password)
+        self.mqtt_client.on_connect = self._on_mqtt_connect
+        self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
+        self.mqtt_client.on_publish = self._on_mqtt_publish
         
-        try:
-            self.interface = meshtastic.tcp_interface.TCPInterface(hostname=self.node_ip)
-            self.node_info = self.interface.getMyNodeInfo()
-            self.connected_node_id = self.node_info["user"]["id"]
-        except Exception as e:
-            logging.error(f"Failed to setup Meshtastic interface: {e}")
-            raise
-
+        # MQTT connection state
+        self.mqtt_connected = False
+        self.mqtt_reconnect_attempts = 0
+        self.max_mqtt_reconnect_attempts = 5
+        
+        # Initialize Meshtastic connection
+        if not self.connection_manager.connect():
+            raise Exception("Failed to establish initial Meshtastic connection")
+        
+        # Subscribe to packet events
         pub.subscribe(self.onReceive, "meshtastic.receive")
 
         # --- Node Cache and Traceroute Daemon Feature ---
-        self.node_cache = NodeCache(self.interface)
+        self.node_cache = NodeCache(self.connection_manager.get_interface())
         
         # Pass configuration parameters directly to TracerouteManager
         self.traceroute_manager = TracerouteManager(
-            self.interface, 
+            self.connection_manager.get_interface(), 
             self.node_cache, 
             traceroute_cooldown,
             traceroute_interval,
@@ -87,6 +93,35 @@ class MeshtasticMQTTHandler:
             traceroute_max_backoff,
             traceroute_persistence_file,
         )
+        
+        # Register cleanup handlers
+        atexit.register(self.cleanup)
+    
+    def _on_mqtt_connect(self, client, userdata, flags, rc):
+        """Callback for MQTT connection"""
+        if rc == 0:
+            self.mqtt_connected = True
+            self.mqtt_reconnect_attempts = 0
+            logging.info("Connected to MQTT broker")
+        else:
+            logging.error(f"Failed to connect to MQTT broker: {rc}")
+    
+    def _on_mqtt_disconnect(self, client, userdata, rc):
+        """Callback for MQTT disconnection"""
+        self.mqtt_connected = False
+        logging.warning(f"Disconnected from MQTT broker: {rc}")
+    
+    def _on_mqtt_publish(self, client, userdata, mid):
+        """Callback for MQTT publish"""
+        logging.debug(f"Message published: {mid}")
+        
+    def _update_interface_references(self):
+        """Update interface references in NodeCache and TracerouteManager after reconnection"""
+        interface = self.connection_manager.get_interface()
+        if interface:
+            self.node_cache.interface = interface
+            self.traceroute_manager.interface = interface
+            logging.info("Updated interface references in NodeCache and TracerouteManager")
 
     def _update_cache_from_packet(self, packet):
         """
@@ -111,13 +146,13 @@ class MeshtasticMQTTHandler:
         """
         logging.info("[Cleanup] Starting cleanup process...")
         
-        # Close interface
-        if hasattr(self, 'interface'):
+        # Close connection manager (which handles interface cleanup)
+        if hasattr(self, 'connection_manager'):
             try:
-                self.interface.close()
-                logging.info("[Cleanup] Meshtastic interface closed.")
+                self.connection_manager.close()
+                logging.info("[Cleanup] ConnectionManager closed.")
             except Exception as e:
-                logging.error(f"[Cleanup] Error closing interface: {e}")
+                logging.error(f"[Cleanup] Error closing ConnectionManager: {e}")
         
         # Disconnect MQTT
         if hasattr(self, 'mqtt_client'):
@@ -139,40 +174,29 @@ class MeshtasticMQTTHandler:
     def connect(self):
         """
         Connects to the MQTT broker and starts the MQTT loop.
-        Includes reconnection logic for both MQTT and Meshtastic.
+        Connection to Meshtastic is managed by ConnectionManager with automatic reconnection.
         """
-        reconnect_attempts = 0
-        
-        while reconnect_attempts < self.max_reconnect_attempts:
-            try:
-                self.mqtt_client.connect(self.broker, self.port, 60)
-                self.mqtt_client.loop_forever()
-            except (BrokenPipeError, ConnectionError) as e:
-                logging.error(f"Connection error: {e}")
-                reconnect_attempts += 1
-                
-                if reconnect_attempts < self.max_reconnect_attempts:
-                    logging.info(f"Attempting to reconnect in {self.reconnect_delay} seconds... (Attempt {reconnect_attempts}/{self.max_reconnect_attempts})")
-                    time.sleep(self.reconnect_delay)
-                    try:
-                        self.interface = meshtastic.tcp_interface.TCPInterface(hostname=self.node_ip)
-                        self.node_info = self.interface.getMyNodeInfo()
-                        self.connected_node_id = self.node_info["user"]["id"]
-                    except Exception as e:
-                        logging.error(f"Failed to reconnect to Meshtastic: {e}")
-                        continue
-                else:
-                    logging.error("Max reconnection attempts reached. Exiting...")
-                    raise
-            except KeyboardInterrupt:
-                logging.info("Received KeyboardInterrupt, cleaning up...")
-                self.cleanup()
-                print("Exiting...")
-                sys.exit(0)
-            except Exception as e:
-                logging.error(f"Unexpected error: {e}")
-                self.cleanup()
-                raise
+        try:
+            # Ensure Meshtastic connection is established
+            if not self.connection_manager.is_connected():
+                if not self.connection_manager.reconnect():
+                    raise Exception("Failed to establish Meshtastic connection")
+                # Update interface references after reconnection
+                self._update_interface_references()
+            
+            # Connect to MQTT broker
+            self.mqtt_client.connect(self.broker, self.port, 60)
+            self.mqtt_client.loop_forever()
+            
+        except KeyboardInterrupt:
+            logging.info("Received KeyboardInterrupt, cleaning up...")
+            self.cleanup()
+            print("Exiting...")
+            sys.exit(0)
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            self.cleanup()
+            raise
         
     def onReceive(self, packet, interface): # called when a packet arrives
         """
@@ -228,7 +252,22 @@ class MeshtasticMQTTHandler:
         for field_descriptor, field_value in packet_dict.items():
             out_packet[field_descriptor] = field_value
 
-        out_packet["gatewayId"] = self.connected_node_id
+        # Get gateway ID from connection manager, with fallback
+        if hasattr(self.connection_manager, 'connected_node_id') and self.connection_manager.connected_node_id:
+            out_packet["gatewayId"] = self.connection_manager.connected_node_id
+        else:
+            # Fallback - try to get it from interface if available
+            interface = self.connection_manager.get_interface()
+            if interface:
+                try:
+                    node_info = interface.getMyNodeInfo()
+                    out_packet["gatewayId"] = node_info["user"]["id"]
+                except Exception as e:
+                    logging.warning(f"Failed to get gateway ID: {e}")
+                    out_packet["gatewayId"] = "unknown"
+            else:
+                out_packet["gatewayId"] = "unknown"
+        
         out_packet["source"] = "rf"
 
         self.publish_dict_to_mqtt(out_packet)

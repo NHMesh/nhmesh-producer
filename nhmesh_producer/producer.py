@@ -25,7 +25,7 @@ import signal
 import atexit
 
 logging.basicConfig(
-    level=environ.get('LOG_LEVEL', "INFO").upper(),
+    level=environ.get('LOG_LEVEL', "DEBUG").upper(),
     format='%(asctime)s - %(levelname)s - %(message)s',
     stream=sys.stdout
 )

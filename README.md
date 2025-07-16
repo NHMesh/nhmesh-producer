@@ -8,29 +8,28 @@ A resilient Meshtastic MQTT producer with automatic reconnection and connection 
 docker run -d \
     --name nhmesh-producer \
     -e NODE_IP=192.168.1.100 \
+    -e MQTT_ENDPOINT=mqtt.nhmesh.live \
     -e MQTT_USERNAME=your_username \
     -e MQTT_PASSWORD=your_password \
-    -p 5001:5001 \
     ghcr.io/nhmesh/producer:latest
 ```
 
-After starting the container, access the web interface at: `http://localhost:5001`
+#### Environment Variables
 
-## Configuration
-
-### Environment Variables
-
-| Variable        | Description                | Default            |
-| --------------- | -------------------------- | ------------------ |
-| `MQTT_ENDPOINT` | MQTT broker address        | `mqtt.nhmesh.live` |
-| `MQTT_PORT`     | MQTT broker port           | `1883`             |
-| `MQTT_TOPIC`    | Root MQTT topic            | `msh/US/NH/`       |
-| `MQTT_USERNAME` | MQTT username              | Required           |
-| `MQTT_PASSWORD` | MQTT password              | Required           |
-| `NODE_IP`       | Meshtastic node IP address | Required           |
-| `WEB_HOST`      | Web interface host         | `0.0.0.0`          |
-| `WEB_PORT`      | Web interface port         | `5001`             |
-| `LOG_LEVEL`     | Logging level              | `INFO`             |
+| Variable                       | Default                         | Description                                                    |
+| ------------------------------ | ------------------------------- | -------------------------------------------------------------- |
+| `LOG_LEVEL`                    | `INFO`                          | Logging level (DEBUG, INFO, WARNING, ERROR)                   |
+| `MQTT_ENDPOINT`                | `mqtt.nhmesh.live`              | MQTT broker address                                            |
+| `MQTT_PORT`                    | `1883`                          | MQTT broker port                                               |
+| `MQTT_USERNAME`                | -                               | MQTT username for authentication                               |
+| `MQTT_PASSWORD`                | -                               | MQTT password for authentication                               |
+| `NODE_IP`                      | -                               | IP address of the Meshtastic node to connect to               |
+| `MQTT_TOPIC`                   | `msh/US/NH/`                    | Root MQTT topic for publishing messages                       |
+| `TRACEROUTE_COOLDOWN`          | `180`                           | Minimum time between any traceroute operations in seconds (3 minutes) |
+| `TRACEROUTE_INTERVAL`          | `43200`                         | Interval between periodic traceroutes in seconds (12 hours)   |
+| `TRACEROUTE_MAX_RETRIES`       | `3`                             | Maximum number of retry attempts for failed traceroutes       |
+| `TRACEROUTE_MAX_BACKOFF`       | `86400`                         | Maximum backoff time in seconds for failed nodes (24 hours)   |
+| `TRACEROUTE_PERSISTENCE_FILE`  | `/tmp/traceroute_state.json`    | Path to file for persisting retry/backoff state across restarts |
 
 ### Command Line Options
 
@@ -41,10 +40,7 @@ python -m nhmesh_producer.producer \
     --topic msh/US/NH/ \
     --username your_username \
     --password your_password \
-    --node-ip 192.168.1.100 \
-    --web-interface \
-    --web-host 0.0.0.0 \
-    --web-port 5001
+    --node-ip 192.168.1.100
 ```
 
 ## Features
@@ -100,16 +96,6 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
-
-```bash
-# Start the producer with web interface
-python -m nhmesh_producer.producer --node-ip 192.168.1.100
-
-# Start without web interface
-python -m nhmesh_producer.producer --node-ip 192.168.1.100 --no-web-interface
-```
-
 ### Building Docker Image Locally
 
 If you want to build the Docker image yourself instead of using the pre-built image:
@@ -127,23 +113,6 @@ docker run -d \
     nhmesh-producer
 ```
 
-## Web Interface
-
-The producer includes a web interface for real-time monitoring:
-
-- **Dashboard**: Overview of network activity and statistics
-- **Traceroute**: Visualize network topology and route quality
-- **API Endpoints**: REST API for programmatic access to data
-
-Access the web interface at: `http://localhost:5001`
-
-### API Endpoints
-
-- `GET /api/nodes` - List all discovered nodes
-- `GET /api/recent_packets` - Recent packet history
-- `GET /api/stats` - Network statistics
-- `GET /api/traceroutes` - Traceroute data
-- `GET /api/network-topology` - Network topology analysis
 
 ## Resilience Features
 

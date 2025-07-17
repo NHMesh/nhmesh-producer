@@ -45,14 +45,14 @@ class MeshtasticMQTTHandler:
         username (str): The MQTT username.
         password (str): The MQTT password.
         node_ip (str): The IP address of the Meshtastic node.
-        traceroute_cooldown (int): Cooldown between traceroutes in seconds (default: 30).
-        traceroute_interval (int): Interval between periodic traceroutes in seconds (default: 10800).
-        traceroute_max_retries (int): Maximum retry attempts for failed traceroutes (default: 5).
+        traceroute_cooldown (int): Cooldown between traceroutes in seconds (default: 180).
+        traceroute_interval (int): Interval between periodic traceroutes in seconds (default: 43200).
+        traceroute_max_retries (int): Maximum retry attempts for failed traceroutes (default: 3).
         traceroute_max_backoff (int): Maximum backoff time in seconds (default: 86400).
     """
     
-    def __init__(self, broker, port, topic, tls, username, password, node_ip, traceroute_cooldown=30, 
-                 traceroute_interval=10800, traceroute_max_retries=5, traceroute_max_backoff=86400, traceroute_persistence_file='/tmp/traceroute_state.json'):
+    def __init__(self, broker, port, topic, tls, username, password, node_ip, traceroute_cooldown=180, 
+                 traceroute_interval=43200, traceroute_max_retries=3, traceroute_max_backoff=86400, traceroute_persistence_file='/tmp/traceroute_state.json'):
         """
         Initializes the MeshtasticMQTTHandler with improved connection management.
         """
@@ -343,9 +343,9 @@ if __name__ == "__main__":
     parser.add_argument('--username', action=EnvDefault, envvar="MQTT_USERNAME", help='MQTT username')
     parser.add_argument('--password', action=EnvDefault, envvar="MQTT_PASSWORD", help='MQTT password')
     parser.add_argument('--node-ip', action=EnvDefault, envvar="NODE_IP", help='Node IP address')
-    parser.add_argument('--traceroute-cooldown', default=30, type=int, action=EnvDefault, envvar="TRACEROUTE_COOLDOWN", help='Cooldown between traceroutes in seconds (default: 30)')
-    parser.add_argument('--traceroute-interval', default=10800, type=int, action=EnvDefault, envvar="TRACEROUTE_INTERVAL", help='Interval between periodic traceroutes in seconds (default: 10800 = 3 hours)')
-    parser.add_argument('--traceroute-max-retries', default=5, type=int, action=EnvDefault, envvar="TRACEROUTE_MAX_RETRIES", help='Maximum number of retry attempts for failed traceroutes (default: 5)')
+    parser.add_argument('--traceroute-cooldown', default=180, type=int, action=EnvDefault, envvar="TRACEROUTE_COOLDOWN", help='Cooldown between traceroutes in seconds (default: 180)')
+    parser.add_argument('--traceroute-interval', default=43200, type=int, action=EnvDefault, envvar="TRACEROUTE_INTERVAL", help='Interval between periodic traceroutes in seconds (default: 43200 = 12 hours)')
+    parser.add_argument('--traceroute-max-retries', default=3, type=int, action=EnvDefault, envvar="TRACEROUTE_MAX_RETRIES", help='Maximum number of retry attempts for failed traceroutes (default: 3)')
     parser.add_argument('--traceroute-max-backoff', default=86400, type=int, action=EnvDefault, envvar="TRACEROUTE_MAX_BACKOFF", help='Maximum backoff time in seconds for failed nodes (default: 86400 = 24 hours)')
     parser.add_argument('--traceroute-persistence-file', default='/tmp/traceroute_state.json', action=EnvDefault, envvar="TRACEROUTE_PERSISTENCE_FILE", help='Path to file for persisting traceroute retry/backoff state (default: /tmp/traceroute_state.json)')
     args = parser.parse_args()

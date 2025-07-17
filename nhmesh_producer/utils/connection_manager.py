@@ -3,15 +3,16 @@ ConnectionManager for managing Meshtastic interface connections with automatic r
 """
 
 import logging
-import time
 import threading
+import time
+
 import meshtastic
 import meshtastic.tcp_interface
 
 
 class ConnectionManager:
     """Manages connection health and automatic reconnection for Meshtastic interface"""
-    
+
     def __init__(self, node_ip, reconnect_attempts=5, reconnect_delay=5, health_check_interval=30):
         self.node_ip = node_ip
         self.reconnect_attempts = reconnect_attempts
@@ -24,11 +25,11 @@ class ConnectionManager:
         self.max_connection_errors = 10
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
-        
+
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         self.health_thread.start()
-        
+
     def connect(self):
         """Establish connection to Meshtastic node with error handling"""
         with self.lock:
@@ -38,57 +39,57 @@ class ConnectionManager:
                         self.interface.close()
                     except Exception as e:
                         logging.warning(f"Error closing existing interface: {e}")
-                
+
                 logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
                 self.interface = meshtastic.tcp_interface.TCPInterface(hostname=self.node_ip)
-                
+
                 # Test connection by getting node info
                 self.node_info = self.interface.getMyNodeInfo()
                 self.connected_node_id = self.node_info["user"]["id"]
-                
+
                 self.connected = True
                 self.connection_errors = 0
                 self.last_heartbeat = time.time()
-                
+
                 logging.info(f"Successfully connected to node {self.connected_node_id}")
                 return True
-                
+
             except Exception as e:
                 logging.error(f"Failed to connect to Meshtastic node: {e}")
                 self.connected = False
                 self.connection_errors += 1
                 return False
-    
+
     def reconnect(self):
         """Attempt to reconnect with exponential backoff"""
         attempts = 0
         while attempts < self.reconnect_attempts and not self.stop_event.is_set():
             attempts += 1
             logging.info(f"Reconnection attempt {attempts}/{self.reconnect_attempts}")
-            
+
             if self.connect():
                 return True
-            
+
             # Check if shutdown was requested
             if self.stop_event.is_set():
                 logging.info("Shutdown requested during reconnection, aborting")
                 break
-            
+
             # Exponential backoff with interruptible wait
             delay = self.reconnect_delay * (2 ** (attempts - 1))
             logging.info(f"Reconnection failed, waiting {delay} seconds before next attempt")
-            
+
             # Use interruptible wait instead of time.sleep
             if self.stop_event.wait(timeout=delay):
                 logging.info("Shutdown requested during reconnection delay, aborting")
                 break
-        
+
         if self.stop_event.is_set():
             logging.info("Reconnection aborted due to shutdown")
         else:
             logging.error("Max reconnection attempts reached")
         return False
-    
+
     def _health_monitor(self):
         """Monitor connection health and trigger reconnection if needed"""
         while not self.stop_event.is_set():
@@ -98,17 +99,17 @@ class ConnectionManager:
                     # Event was set (shutdown requested), exit gracefully
                     logging.info("Health monitor received shutdown signal, exiting")
                     break
-                
+
                 # Only continue if not shutting down
                 if self.stop_event.is_set():
                     break
-                    
+
                 if not self.connected or self.connection_errors >= self.max_connection_errors:
                     logging.warning("Connection health check failed, attempting reconnection")
                     # Don't attempt reconnection if shutting down
                     if not self.stop_event.is_set():
                         self.reconnect()
-                
+
                 # Check if interface is still responsive
                 if self.interface and self.connected and not self.stop_event.is_set():
                     try:
@@ -119,28 +120,28 @@ class ConnectionManager:
                         logging.warning(f"Health check failed: {e}")
                         self.connected = False
                         self.connection_errors += 1
-                        
+
             except Exception as e:
                 logging.error(f"Error in health monitor: {e}")
-        
+
         logging.info("Health monitor thread exiting cleanly")
-    
+
     def is_connected(self):
         """Check if currently connected"""
         return self.connected and self.interface is not None
-    
+
     def get_interface(self):
         """Get the current interface, reconnecting if necessary"""
         if not self.is_connected():
             if not self.reconnect():
                 return None
         return self.interface
-    
+
     def close(self):
         """Close the connection and stop monitoring"""
         logging.info("ConnectionManager closing...")
         self.stop_event.set()
-        
+
         # Wait for health monitor thread to finish
         if hasattr(self, 'health_thread') and self.health_thread.is_alive():
             logging.info("Waiting for health monitor thread to finish...")
@@ -149,7 +150,7 @@ class ConnectionManager:
                 logging.warning("Health monitor thread did not finish cleanly")
             else:
                 logging.info("Health monitor thread finished cleanly")
-        
+
         if self.interface:
             try:
                 self.interface.close()

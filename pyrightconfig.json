@@ -1,0 +1,18 @@
+{
+  "include": [
+    "nhmesh_producer/**/*.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    ".venv"
+  ],
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false,
+  "reportUnusedImport": true,
+  "reportUnusedVariable": true,
+  "reportTypedDictNotRequiredAccess": false,
+  "reportPrivateImportUsage": false
+}

@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from os import environ
+from typing import Any
 
 import paho.mqtt.client as mqtt
 from google.protobuf import json_format
@@ -54,19 +55,19 @@ class MeshtasticMQTTHandler:
 
     def __init__(
         self,
-        broker,
-        port,
-        topic,
-        tls,
-        username,
-        password,
-        node_ip,
-        traceroute_cooldown=180,
-        traceroute_interval=43200,
-        traceroute_max_retries=3,
-        traceroute_max_backoff=86400,
-        traceroute_persistence_file="/tmp/traceroute_state.json",
-    ):
+        broker: str,
+        port: int,
+        topic: str,
+        tls: bool,
+        username: str | None,
+        password: str | None,
+        node_ip: str,
+        traceroute_cooldown: int = 180,
+        traceroute_interval: int = 43200,
+        traceroute_max_retries: int = 3,
+        traceroute_max_backoff: int = 86400,
+        traceroute_persistence_file: str = "/tmp/traceroute_state.json",
+    ) -> None:
         """
         Initializes the MeshtasticMQTTHandler with improved connection management.
         """
@@ -83,7 +84,10 @@ class MeshtasticMQTTHandler:
 
         # MQTT client setup with callbacks
         self.mqtt_client = mqtt.Client()
-        self.mqtt_client.username_pw_set(username=self.username, password=self.password)
+        if self.username and self.password:
+            self.mqtt_client.username_pw_set(
+                username=self.username, password=self.password
+            )
         self.mqtt_client.on_connect = self._on_mqtt_connect
         self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self.mqtt_client.on_publish = self._on_mqtt_publish
@@ -113,12 +117,12 @@ class MeshtasticMQTTHandler:
         )
 
         # Subscribe to packet events AFTER traceroute_manager is initialized
-        pub.subscribe(self.onReceive, "meshtastic.receive")
+        pub.subscribe(self.onReceive, "meshtastic.receive")  # type: ignore
 
         # Register cleanup handlers
         atexit.register(self.cleanup)
 
-    def _on_mqtt_connect(self, client, userdata, flags, rc):
+    def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
         """Callback for MQTT connection"""
         if rc == 0:
             self.mqtt_connected = True
@@ -127,16 +131,16 @@ class MeshtasticMQTTHandler:
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
 
-    def _on_mqtt_disconnect(self, client, userdata, rc):
+    def _on_mqtt_disconnect(self, client: Any, userdata: Any, rc: int) -> None:
         """Callback for MQTT disconnection"""
         self.mqtt_connected = False
         logging.warning(f"Disconnected from MQTT broker: {rc}")
 
-    def _on_mqtt_publish(self, client, userdata, mid):
+    def _on_mqtt_publish(self, client: Any, userdata: Any, mid: int) -> None:
         """Callback for MQTT publish"""
         logging.debug(f"Message published: {mid}")
 
-    def _update_interface_references(self):
+    def _update_interface_references(self) -> None:
         """Update interface references in NodeCache and TracerouteManager after reconnection"""
         interface = self.connection_manager.get_interface()
         if interface:
@@ -146,7 +150,7 @@ class MeshtasticMQTTHandler:
                 "Updated interface references in NodeCache and TracerouteManager"
             )
 
-    def _update_cache_from_packet(self, packet):
+    def _update_cache_from_packet(self, packet: dict[str, Any]) -> None:
         """
         Update cache from packet and delegate traceroute logic to TracerouteManager.
 
@@ -165,7 +169,7 @@ class MeshtasticMQTTHandler:
         # Delegate traceroute queueing logic to TracerouteManager
         self.traceroute_manager.process_packet_for_traceroutes(node_id, is_new_node)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Properly cleanup all resources.
         """
@@ -204,7 +208,7 @@ class MeshtasticMQTTHandler:
 
         logging.info("[Cleanup] Cleanup process completed.")
 
-    def connect(self):
+    def connect(self) -> None:
         """
         Connects to the MQTT broker and starts the MQTT loop.
         Connection to Meshtastic is managed by ConnectionManager with automatic reconnection.
@@ -240,14 +244,15 @@ class MeshtasticMQTTHandler:
             self.cleanup()
             raise
 
-    def onReceive(self, packet, interface):  # called when a packet arrives
+    def onReceive(self, packet: bytes | dict[str, Any] | str, interface: Any) -> None:
         """
         Handles incoming Meshtastic packets.
         Args:
             packet (bytes|dict|str): The received packet data (could be bytes, JSON string, or dict).
+            interface: The Meshtastic interface that received the packet.
         """
         # Try to decode packet as JSON first
-        packet_dict = None
+        packet_dict: dict[str, Any] | None = None
         if isinstance(packet, dict):
             packet_dict = packet
         elif isinstance(packet, bytes):
@@ -265,7 +270,7 @@ class MeshtasticMQTTHandler:
                 except Exception as e:
                     logging.error(f"Failed to decode packet as protobuf: {e}")
                     return
-        elif isinstance(packet, str):
+        else:  # isinstance(packet, str)
             try:
                 packet_dict = json.loads(packet)
             except Exception:
@@ -280,8 +285,9 @@ class MeshtasticMQTTHandler:
                 except Exception as e:
                     logging.error(f"Failed to decode packet string as protobuf: {e}")
                     return
-        else:
-            logging.error(f"Unknown packet type: {type(packet)}")
+
+        if packet_dict is None:
+            logging.error("Failed to decode packet")
             return
 
         logging.info(
@@ -291,7 +297,7 @@ class MeshtasticMQTTHandler:
 
         self._update_cache_from_packet(packet_dict)
 
-        out_packet = {}
+        out_packet: dict[str, Any] = {}
         for field_descriptor, field_value in packet_dict.items():
             out_packet[field_descriptor] = field_value
 
@@ -318,7 +324,7 @@ class MeshtasticMQTTHandler:
 
         self.publish_dict_to_mqtt(out_packet)
 
-    def publish_dict_to_mqtt(self, payload):
+    def publish_dict_to_mqtt(self, payload: dict[str, Any]) -> None:
         """
         Publishes a dictionary payload to an MQTT topic.
 
@@ -327,10 +333,10 @@ class MeshtasticMQTTHandler:
         """
 
         topic_node = f"{self.topic}/{payload['fromId']}"
-        payload = json.dumps(payload, default=str)
+        payload_json = json.dumps(payload, default=str)
 
         # Publish the JSON payload to the specified topic
-        self.mqtt_client.publish(topic_node, payload)
+        self.mqtt_client.publish(topic_node, payload_json)
 
 
 if __name__ == "__main__":
@@ -339,7 +345,7 @@ if __name__ == "__main__":
     # Global client reference for signal handlers
     client: MeshtasticMQTTHandler | None = None
 
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: Any) -> None:
         """Handle shutdown signals gracefully."""
         signal_name = signal.Signals(signum).name
         logging.info(f"Received {signal_name}, cleaning up...")
@@ -353,7 +359,7 @@ if __name__ == "__main__":
 
         # The main thread should exit on its own now that shutdown event is set
         # If it doesn't exit within a reasonable time, force exit
-        def force_exit():
+        def force_exit() -> None:
             time.sleep(2.0)  # Give main thread 2 seconds to exit gracefully
             logging.warning("Main thread did not exit gracefully, forcing exit")
             os._exit(1)

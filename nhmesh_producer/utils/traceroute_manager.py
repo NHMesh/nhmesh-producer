@@ -5,6 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import Any
 
 from utils.deduplicated_queue import DeduplicatedQueue
 
@@ -25,14 +26,14 @@ class TracerouteManager:
 
     def __init__(
         self,
-        interface,
-        node_cache,
-        traceroute_cooldown=None,
-        traceroute_interval=None,
-        max_retries=None,
-        max_backoff=None,
-        traceroute_persistence_file="/tmp/traceroute_state.json",
-    ):
+        interface: Any,
+        node_cache: Any,
+        traceroute_cooldown: int | None = None,
+        traceroute_interval: int | None = None,
+        max_retries: int | None = None,
+        max_backoff: int | None = None,
+        traceroute_persistence_file: str = "/tmp/traceroute_state.json",
+    ) -> None:
         """
         Initialize the TracerouteManager.
 
@@ -49,23 +50,23 @@ class TracerouteManager:
         self.node_cache = node_cache
 
         # Configuration with environment variable defaults or passed parameters
-        self._TRACEROUTE_INTERVAL = (
+        self._TRACEROUTE_INTERVAL: int = (
             traceroute_interval
             if traceroute_interval is not None
             else int(os.getenv("TRACEROUTE_INTERVAL", 12 * 60 * 60))
         )  # Default: 12 hours
-        self._TRACEROUTE_COOLDOWN = (
+        self._TRACEROUTE_COOLDOWN: int = (
             traceroute_cooldown
             if traceroute_cooldown is not None
             else int(os.getenv("TRACEROUTE_COOLDOWN", 3 * 60))
         )  # Default: 3 minutes
-        self._last_global_traceroute_time = 0  # Global cooldown timestamp
-        self._MAX_RETRIES = (
+        self._last_global_traceroute_time: float = 0  # Global cooldown timestamp
+        self._MAX_RETRIES: int = (
             max_retries
             if max_retries is not None
             else int(os.getenv("TRACEROUTE_MAX_RETRIES", 3))
         )  # Default: 3 retries
-        self._MAX_BACKOFF = (
+        self._MAX_BACKOFF: int = (
             max_backoff
             if max_backoff is not None
             else int(os.getenv("TRACEROUTE_MAX_BACKOFF", 24 * 60 * 60))
@@ -90,7 +91,9 @@ class TracerouteManager:
         self._load_state()
 
         # Queue and threading
-        self._traceroute_queue = DeduplicatedQueue(key_func=lambda x: x[0])
+        self._traceroute_queue: DeduplicatedQueue[tuple[str, int]] = DeduplicatedQueue(
+            key_func=lambda x: x[0]
+        )
         self._shutdown_flag = threading.Event()  # Flag to signal shutdown
 
         # Thread pool for non-blocking traceroute execution with limited concurrency
@@ -112,7 +115,7 @@ class TracerouteManager:
         )
         logging.info(f"Traceroute persistence: {self._persistence_file}")
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """
         Load persisted traceroute state from filesystem.
         """
@@ -128,7 +131,7 @@ class TracerouteManager:
 
                 # Clean up expired backoffs
                 now = time.time()
-                expired_nodes = []
+                expired_nodes: list[str] = []
                 for node_id, backoff_until in self._node_backoff_until.items():
                     if backoff_until < now:
                         expired_nodes.append(node_id)
@@ -174,7 +177,7 @@ class TracerouteManager:
 
                 # Log nodes with active failures and backoffs for debugging
                 if self._node_failure_counts:
-                    failure_details = [
+                    failure_details: list[str] = [
                         f"{node_id}({count})"
                         for node_id, count in self._node_failure_counts.items()
                     ]
@@ -183,7 +186,7 @@ class TracerouteManager:
                     )
 
                 if self._node_backoff_until:
-                    backoff_details = []
+                    backoff_details: list[str] = []
                     for node_id, backoff_until in self._node_backoff_until.items():
                         remaining_time = (backoff_until - now) / 60
                         backoff_details.append(f"{node_id}({remaining_time:.1f}m)")
@@ -202,7 +205,7 @@ class TracerouteManager:
             self._node_failure_counts = {}
             self._node_backoff_until = {}
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """
         Save current traceroute state to filesystem.
         """
@@ -229,7 +232,7 @@ class TracerouteManager:
                 f"[Persistence] Failed to save state to {self._persistence_file}: {e}"
             )
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Cleanup resources and save final state.
         """
@@ -279,7 +282,7 @@ class TracerouteManager:
 
         self._save_state()
 
-    def _calculate_backoff_time(self, failure_count):
+    def _calculate_backoff_time(self, failure_count: int) -> int:
         """
         Calculate exponential backoff time based on failure count.
         Uses the traceroute interval as the base backoff time.
@@ -300,7 +303,7 @@ class TracerouteManager:
         )
         return backoff_time
 
-    def _is_node_in_backoff(self, node_id):
+    def _is_node_in_backoff(self, node_id: str) -> bool:
         """
         Check if a node is currently in backoff period.
 
@@ -316,7 +319,7 @@ class TracerouteManager:
         now = time.time()
         return now < self._node_backoff_until[node_id]
 
-    def record_traceroute_success(self, node_id):
+    def record_traceroute_success(self, node_id: str) -> None:
         """
         Record a successful traceroute for a node, resetting failure count.
 
@@ -342,7 +345,7 @@ class TracerouteManager:
 
         self._save_state()
 
-    def _record_traceroute_failure(self, node_id):
+    def _record_traceroute_failure(self, node_id: str) -> bool:
         """
         Record a failed traceroute for a node and calculate backoff.
 
@@ -379,7 +382,7 @@ class TracerouteManager:
         self._save_state()
         return True
 
-    def _format_position(self, pos):
+    def _format_position(self, pos: tuple[float, float, float | None] | None) -> str:
         """
         Format position tuple for display.
 
@@ -397,7 +400,7 @@ class TracerouteManager:
             s += f" {alt}m"
         return s
 
-    def _run_traceroute(self, node_id):
+    def _run_traceroute(self, node_id: str) -> bool:
         """
         Execute a traceroute for the given node.
 
@@ -503,7 +506,7 @@ class TracerouteManager:
             self._record_traceroute_failure(node_id)
             return False
 
-    def _traceroute_worker(self):
+    def _traceroute_worker(self) -> None:
         """
         Worker thread that processes traceroute jobs from the queue.
         """
@@ -619,7 +622,7 @@ class TracerouteManager:
 
         logging.info("[Traceroute] Worker thread exiting cleanly")
 
-    def process_packet_for_traceroutes(self, node_id, is_new_node):
+    def process_packet_for_traceroutes(self, node_id: str, is_new_node: bool) -> None:
         """
         Process a node from a packet for traceroute queueing logic.
         This method only handles traceroute-specific logic.
@@ -664,7 +667,7 @@ class TracerouteManager:
                     f"[Traceroute] Periodic traceroute for node {node_id} already queued, skipping duplicate."
                 )
 
-    def queue_traceroute(self, node_id):
+    def queue_traceroute(self, node_id: str) -> bool:
         """
         Manually queue a traceroute for a specific node.
 

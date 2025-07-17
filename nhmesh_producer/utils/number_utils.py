@@ -5,11 +5,9 @@ when converting to float
 """
 
 import logging
-from typing import Any, TypeVar
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 def safe_float(value: Any, default: float | None = None) -> float | None:
@@ -33,7 +31,9 @@ def safe_float(value: Any, default: float | None = None) -> float | None:
         return default
 
 
-def safe_float_list(values: list[Any], default_item: float | None = 0.0) -> list[float]:
+def safe_float_list(
+    values: list[Any], default_item: float | None = 0.0
+) -> list[float | None]:
     """
     Safely convert a list of values to floats, handling large integers and other edge cases.
 
@@ -47,7 +47,7 @@ def safe_float_list(values: list[Any], default_item: float | None = 0.0) -> list
     if not values:
         return []
 
-    result = []
+    result: list[float | None] = []
     for value in values:
         result.append(safe_float(value, default_item))
     return result
@@ -55,7 +55,7 @@ def safe_float_list(values: list[Any], default_item: float | None = 0.0) -> list
 
 def safe_process_position(
     latitude_i: Any, longitude_i: Any, altitude: Any = None
-) -> tuple:
+) -> tuple[float | None, float | None, float | None]:
     """
     Safely process position data (latitude, longitude, altitude) from Meshtastic protocol.
 
@@ -83,4 +83,4 @@ def safe_process_position(
     if altitude is not None and altitude != 0:
         alt = safe_float(altitude)
 
-    return lat, lon, alt
+    return (lat, lon, alt)

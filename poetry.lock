@@ -604,34 +604,30 @@ traitlets = "*"
 
 [[package]]
 name = "meshtastic"
-version = "2.6.3"
+version = "2.6.4"
 description = "Python API & client shell for talking to Meshtastic devices"
 optional = false
-python-versions = "^3.9,<3.14"
+python-versions = "<3.14,>=3.9"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "meshtastic-2.6.4-py3-none-any.whl", hash = "sha256:c7e42686daa25f6d4dc3edb6bb23db1be58ccef605cd97732a1f225df4674d40"},
+    {file = "meshtastic-2.6.4.tar.gz", hash = "sha256:308ca54b666b680499e3025bbff50c1f40fe60a31c3ab9982a44ddeae2e9a012"},
+]
 
 [package.dependencies]
-bleak = "^0.22.3"
-packaging = "^24.0"
+bleak = ">=0.22.3,<0.23.0"
+packaging = ">=24.0,<25.0"
 protobuf = ">=4.21.12"
-pypubsub = "^4.0.3"
-pyserial = "^3.5"
-pyyaml = "^6.0.1"
-requests = "^2.31.0"
-tabulate = "^0.9.0"
+pypubsub = ">=4.0.3,<5.0.0"
+pyserial = ">=3.5,<4.0"
+pyyaml = ">=6.0.1,<7.0.0"
+requests = ">=2.31.0,<3.0.0"
+tabulate = ">=0.9.0,<0.10.0"
 
 [package.extras]
 analysis = ["dash (>=2.17.1,<3.0.0)", "dash-bootstrap-components (>=1.6.0,<2.0.0)", "pandas (>=2.2.2,<3.0.0)", "pandas-stubs (>=2.2.2.240603,<3.0.0.0)"]
 cli = ["argcomplete (>=3.5.2,<4.0.0)", "dotmap (>=1.3.30,<2.0.0)", "print-color (>=0.4.6,<0.5.0)", "pyqrcode (>=1.2.1,<2.0.0)", "wcwidth (>=0.2.13,<0.3.0)"]
 tunnel = ["pytap2 (>=2.3.0,<3.0.0)"]
-
-[package.source]
-type = "git"
-url = "https://github.com/meshtastic/python.git"
-reference = "master"
-resolved_reference = "0deb98b4c66ae234e4b11937fbb2f4b9b947c75c"
 
 [[package]]
 name = "networkx"
@@ -1541,4 +1537,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "c241815e143a165642208ab81440d56f2d536274185fd82347bc0c7b88c66655"
+content-hash = "f09182ebab43cbbfeb10995558f2dc465d79449651ae299bc585e9591c6cb37f"

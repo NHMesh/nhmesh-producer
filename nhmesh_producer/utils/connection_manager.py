@@ -13,7 +13,9 @@ import meshtastic.tcp_interface
 class ConnectionManager:
     """Manages connection health and automatic reconnection for Meshtastic interface"""
 
-    def __init__(self, node_ip, reconnect_attempts=5, reconnect_delay=5, health_check_interval=30):
+    def __init__(
+        self, node_ip, reconnect_attempts=5, reconnect_delay=5, health_check_interval=30
+    ):
         self.node_ip = node_ip
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay = reconnect_delay
@@ -41,7 +43,9 @@ class ConnectionManager:
                         logging.warning(f"Error closing existing interface: {e}")
 
                 logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
-                self.interface = meshtastic.tcp_interface.TCPInterface(hostname=self.node_ip)
+                self.interface = meshtastic.tcp_interface.TCPInterface(
+                    hostname=self.node_ip
+                )
 
                 # Test connection by getting node info
                 self.node_info = self.interface.getMyNodeInfo()
@@ -77,7 +81,9 @@ class ConnectionManager:
 
             # Exponential backoff with interruptible wait
             delay = self.reconnect_delay * (2 ** (attempts - 1))
-            logging.info(f"Reconnection failed, waiting {delay} seconds before next attempt")
+            logging.info(
+                f"Reconnection failed, waiting {delay} seconds before next attempt"
+            )
 
             # Use interruptible wait instead of time.sleep
             if self.stop_event.wait(timeout=delay):
@@ -104,8 +110,13 @@ class ConnectionManager:
                 if self.stop_event.is_set():
                     break
 
-                if not self.connected or self.connection_errors >= self.max_connection_errors:
-                    logging.warning("Connection health check failed, attempting reconnection")
+                if (
+                    not self.connected
+                    or self.connection_errors >= self.max_connection_errors
+                ):
+                    logging.warning(
+                        "Connection health check failed, attempting reconnection"
+                    )
                     # Don't attempt reconnection if shutting down
                     if not self.stop_event.is_set():
                         self.reconnect()
@@ -143,7 +154,7 @@ class ConnectionManager:
         self.stop_event.set()
 
         # Wait for health monitor thread to finish
-        if hasattr(self, 'health_thread') and self.health_thread.is_alive():
+        if hasattr(self, "health_thread") and self.health_thread.is_alive():
             logging.info("Waiting for health monitor thread to finish...")
             self.health_thread.join(timeout=2.0)  # 2 second timeout
             if self.health_thread.is_alive():

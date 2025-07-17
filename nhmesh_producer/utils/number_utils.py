@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def safe_float(value: Any, default: float | None = None) -> float | None:
@@ -53,7 +53,9 @@ def safe_float_list(values: list[Any], default_item: float | None = 0.0) -> list
     return result
 
 
-def safe_process_position(latitude_i: Any, longitude_i: Any, altitude: Any = None) -> tuple:
+def safe_process_position(
+    latitude_i: Any, longitude_i: Any, altitude: Any = None
+) -> tuple:
     """
     Safely process position data (latitude, longitude, altitude) from Meshtastic protocol.
 

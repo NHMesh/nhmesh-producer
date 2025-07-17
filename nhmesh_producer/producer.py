@@ -26,10 +26,11 @@ from utils.node_cache import NodeCache
 from utils.traceroute_manager import TracerouteManager
 
 logging.basicConfig(
-    level=environ.get('LOG_LEVEL', "DEBUG").upper(),
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
+    level=environ.get("LOG_LEVEL", "DEBUG").upper(),
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
+
 
 class MeshtasticMQTTHandler:
     """
@@ -51,8 +52,21 @@ class MeshtasticMQTTHandler:
         traceroute_max_backoff (int): Maximum backoff time in seconds (default: 86400).
     """
 
-    def __init__(self, broker, port, topic, tls, username, password, node_ip, traceroute_cooldown=180,
-                 traceroute_interval=43200, traceroute_max_retries=3, traceroute_max_backoff=86400, traceroute_persistence_file='/tmp/traceroute_state.json'):
+    def __init__(
+        self,
+        broker,
+        port,
+        topic,
+        tls,
+        username,
+        password,
+        node_ip,
+        traceroute_cooldown=180,
+        traceroute_interval=43200,
+        traceroute_max_retries=3,
+        traceroute_max_backoff=86400,
+        traceroute_persistence_file="/tmp/traceroute_state.json",
+    ):
         """
         Initializes the MeshtasticMQTTHandler with improved connection management.
         """
@@ -128,7 +142,9 @@ class MeshtasticMQTTHandler:
         if interface:
             self.node_cache.interface = interface
             self.traceroute_manager.interface = interface
-            logging.info("Updated interface references in NodeCache and TracerouteManager")
+            logging.info(
+                "Updated interface references in NodeCache and TracerouteManager"
+            )
 
     def _update_cache_from_packet(self, packet):
         """
@@ -142,7 +158,9 @@ class MeshtasticMQTTHandler:
         if node_id is None:
             return
 
-        is_new_node = self.node_cache.update_from_packet(packet, self.traceroute_manager)
+        is_new_node = self.node_cache.update_from_packet(
+            packet, self.traceroute_manager
+        )
 
         # Delegate traceroute queueing logic to TracerouteManager
         self.traceroute_manager.process_packet_for_traceroutes(node_id, is_new_node)
@@ -157,7 +175,7 @@ class MeshtasticMQTTHandler:
         self._shutdown_event.set()  # Signal shutdown to main thread
 
         # Cleanup TracerouteManager and save state first
-        if hasattr(self, 'traceroute_manager'):
+        if hasattr(self, "traceroute_manager"):
             try:
                 logging.info("[Cleanup] Cleaning up TracerouteManager...")
                 self.traceroute_manager.cleanup()
@@ -166,7 +184,7 @@ class MeshtasticMQTTHandler:
                 logging.error(f"[Cleanup] Error cleaning up TracerouteManager: {e}")
 
         # Close connection manager (which handles interface cleanup)
-        if hasattr(self, 'connection_manager'):
+        if hasattr(self, "connection_manager"):
             try:
                 logging.info("[Cleanup] Closing ConnectionManager...")
                 self.connection_manager.close()
@@ -175,7 +193,7 @@ class MeshtasticMQTTHandler:
                 logging.error(f"[Cleanup] Error closing ConnectionManager: {e}")
 
         # Disconnect MQTT
-        if hasattr(self, 'mqtt_client'):
+        if hasattr(self, "mqtt_client"):
             try:
                 logging.info("[Cleanup] Disconnecting MQTT client...")
                 self.mqtt_client.disconnect()
@@ -222,7 +240,7 @@ class MeshtasticMQTTHandler:
             self.cleanup()
             raise
 
-    def onReceive(self, packet, interface): # called when a packet arrives
+    def onReceive(self, packet, interface):  # called when a packet arrives
         """
         Handles incoming Meshtastic packets.
         Args:
@@ -234,14 +252,16 @@ class MeshtasticMQTTHandler:
             packet_dict = packet
         elif isinstance(packet, bytes):
             try:
-                packet_dict = json.loads(packet.decode('utf-8'))
+                packet_dict = json.loads(packet.decode("utf-8"))
             except Exception:
                 # Not JSON, try protobuf
                 try:
                     mesh_packet = mesh_pb2.MeshPacket()
                     mesh_packet.ParseFromString(packet)
                     # Convert protobuf to dict
-                    packet_dict = json_format.MessageToDict(mesh_packet, preserving_proto_field_name=True)
+                    packet_dict = json_format.MessageToDict(
+                        mesh_packet, preserving_proto_field_name=True
+                    )
                 except Exception as e:
                     logging.error(f"Failed to decode packet as protobuf: {e}")
                     return
@@ -254,7 +274,9 @@ class MeshtasticMQTTHandler:
                     packet_bytes = base64.b64decode(packet)
                     mesh_packet = mesh_pb2.MeshPacket()
                     mesh_packet.ParseFromString(packet_bytes)
-                    packet_dict = json_format.MessageToDict(mesh_packet, preserving_proto_field_name=True)
+                    packet_dict = json_format.MessageToDict(
+                        mesh_packet, preserving_proto_field_name=True
+                    )
                 except Exception as e:
                     logging.error(f"Failed to decode packet string as protobuf: {e}")
                     return
@@ -262,7 +284,9 @@ class MeshtasticMQTTHandler:
             logging.error(f"Unknown packet type: {type(packet)}")
             return
 
-        logging.info(f"[onReceive] Packet received from '{packet_dict.get("fromId", "unknown")}' to '{packet_dict.get("to", "unknown")}'")
+        logging.info(
+            f"[onReceive] Packet received from '{packet_dict.get('fromId', 'unknown')}' to '{packet_dict.get('to', 'unknown')}'"
+        )
         logging.debug(f"[onReceive] Raw packet: {packet_dict}")
 
         self._update_cache_from_packet(packet_dict)
@@ -272,7 +296,10 @@ class MeshtasticMQTTHandler:
             out_packet[field_descriptor] = field_value
 
         # Get gateway ID from connection manager, with fallback
-        if hasattr(self.connection_manager, 'connected_node_id') and self.connection_manager.connected_node_id:
+        if (
+            hasattr(self.connection_manager, "connected_node_id")
+            and self.connection_manager.connected_node_id
+        ):
             out_packet["gatewayId"] = self.connection_manager.connected_node_id
         else:
             # Fallback - try to get it from interface if available
@@ -335,19 +362,78 @@ if __name__ == "__main__":
         force_exit_thread = threading.Thread(target=force_exit, daemon=True)
         force_exit_thread.start()
 
-    parser = argparse.ArgumentParser(description='Meshtastic MQTT Handler')
-    parser.add_argument('--broker', default='mqtt.nhmesh.live', action=EnvDefault, envvar="MQTT_ENDPOINT", help='MQTT broker address')
-    parser.add_argument('--port', default=1883, type=int, action=EnvDefault, envvar="MQTT_PORT", help='MQTT broker port')
-    parser.add_argument('--topic', default='msh/US/NH/', action=EnvDefault, envvar="MQTT_TOPIC", help='Root topic')
-    parser.add_argument('--tls', type=bool, default=False, help='Enable TLS/SSL')
-    parser.add_argument('--username', action=EnvDefault, envvar="MQTT_USERNAME", help='MQTT username')
-    parser.add_argument('--password', action=EnvDefault, envvar="MQTT_PASSWORD", help='MQTT password')
-    parser.add_argument('--node-ip', action=EnvDefault, envvar="NODE_IP", help='Node IP address')
-    parser.add_argument('--traceroute-cooldown', default=180, type=int, action=EnvDefault, envvar="TRACEROUTE_COOLDOWN", help='Cooldown between traceroutes in seconds (default: 180)')
-    parser.add_argument('--traceroute-interval', default=43200, type=int, action=EnvDefault, envvar="TRACEROUTE_INTERVAL", help='Interval between periodic traceroutes in seconds (default: 43200 = 12 hours)')
-    parser.add_argument('--traceroute-max-retries', default=3, type=int, action=EnvDefault, envvar="TRACEROUTE_MAX_RETRIES", help='Maximum number of retry attempts for failed traceroutes (default: 3)')
-    parser.add_argument('--traceroute-max-backoff', default=86400, type=int, action=EnvDefault, envvar="TRACEROUTE_MAX_BACKOFF", help='Maximum backoff time in seconds for failed nodes (default: 86400 = 24 hours)')
-    parser.add_argument('--traceroute-persistence-file', default='/tmp/traceroute_state.json', action=EnvDefault, envvar="TRACEROUTE_PERSISTENCE_FILE", help='Path to file for persisting traceroute retry/backoff state (default: /tmp/traceroute_state.json)')
+    parser = argparse.ArgumentParser(description="Meshtastic MQTT Handler")
+    parser.add_argument(
+        "--broker",
+        default="mqtt.nhmesh.live",
+        action=EnvDefault,
+        envvar="MQTT_ENDPOINT",
+        help="MQTT broker address",
+    )
+    parser.add_argument(
+        "--port",
+        default=1883,
+        type=int,
+        action=EnvDefault,
+        envvar="MQTT_PORT",
+        help="MQTT broker port",
+    )
+    parser.add_argument(
+        "--topic",
+        default="msh/US/NH/",
+        action=EnvDefault,
+        envvar="MQTT_TOPIC",
+        help="Root topic",
+    )
+    parser.add_argument("--tls", type=bool, default=False, help="Enable TLS/SSL")
+    parser.add_argument(
+        "--username", action=EnvDefault, envvar="MQTT_USERNAME", help="MQTT username"
+    )
+    parser.add_argument(
+        "--password", action=EnvDefault, envvar="MQTT_PASSWORD", help="MQTT password"
+    )
+    parser.add_argument(
+        "--node-ip", action=EnvDefault, envvar="NODE_IP", help="Node IP address"
+    )
+    parser.add_argument(
+        "--traceroute-cooldown",
+        default=180,
+        type=int,
+        action=EnvDefault,
+        envvar="TRACEROUTE_COOLDOWN",
+        help="Cooldown between traceroutes in seconds (default: 180)",
+    )
+    parser.add_argument(
+        "--traceroute-interval",
+        default=43200,
+        type=int,
+        action=EnvDefault,
+        envvar="TRACEROUTE_INTERVAL",
+        help="Interval between periodic traceroutes in seconds (default: 43200 = 12 hours)",
+    )
+    parser.add_argument(
+        "--traceroute-max-retries",
+        default=3,
+        type=int,
+        action=EnvDefault,
+        envvar="TRACEROUTE_MAX_RETRIES",
+        help="Maximum number of retry attempts for failed traceroutes (default: 3)",
+    )
+    parser.add_argument(
+        "--traceroute-max-backoff",
+        default=86400,
+        type=int,
+        action=EnvDefault,
+        envvar="TRACEROUTE_MAX_BACKOFF",
+        help="Maximum backoff time in seconds for failed nodes (default: 86400 = 24 hours)",
+    )
+    parser.add_argument(
+        "--traceroute-persistence-file",
+        default="/tmp/traceroute_state.json",
+        action=EnvDefault,
+        envvar="TRACEROUTE_PERSISTENCE_FILE",
+        help="Path to file for persisting traceroute retry/backoff state (default: /tmp/traceroute_state.json)",
+    )
     args = parser.parse_args()
 
     try:
@@ -363,12 +449,12 @@ if __name__ == "__main__":
             args.traceroute_interval,
             args.traceroute_max_retries,
             args.traceroute_max_backoff,
-            args.traceroute_persistence_file
+            args.traceroute_persistence_file,
         )
 
         # Register signal handlers for graceful shutdown AFTER client creation
         signal.signal(signal.SIGTERM, signal_handler)  # Docker stop
-        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
 
         client.connect()
     except Exception as e:

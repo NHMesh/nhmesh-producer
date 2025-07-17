@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "@kb1rma"
+      - "@grleblanc"
+    assignees:
+      - "@kb1rma"
+      - "@grleblanc"
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "@kb1rma"
+      - "@grleblanc"
+    assignees:
+      - "@kb1rma"
+      - "@grleblanc"
+    commit-message:
+      prefix: "ci"

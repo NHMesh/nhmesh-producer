@@ -13,7 +13,6 @@ updates:
       - "@grleblanc"
     commit-message:
       prefix: "deps"
-      include: "scope"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -28,4 +27,3 @@ updates:
       - "@grleblanc"
     commit-message:
       prefix: "ci"
-      include: "scope"

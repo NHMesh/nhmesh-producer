@@ -11,7 +11,6 @@
 A resilient Meshtastic MQTT producer with automatic reconnection and connection health monitoring. This standalone producer handles the connection to Meshtastic nodes and publishes received packets to an MQTT broker with enhanced error handling and recovery mechanisms.
 
 ## Running with Docker
-          echo "Running ruff check with GitHub annotations..."
 
 ```bash
 docker run -d \

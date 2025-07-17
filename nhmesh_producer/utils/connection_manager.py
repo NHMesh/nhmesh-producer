@@ -69,26 +69,48 @@ class ConnectionManager:
             if self.connect():
                 return True
             
-            # Exponential backoff
+            # Check if shutdown was requested
+            if self.stop_event.is_set():
+                logging.info("Shutdown requested during reconnection, aborting")
+                break
+            
+            # Exponential backoff with interruptible wait
             delay = self.reconnect_delay * (2 ** (attempts - 1))
             logging.info(f"Reconnection failed, waiting {delay} seconds before next attempt")
-            time.sleep(delay)
+            
+            # Use interruptible wait instead of time.sleep
+            if self.stop_event.wait(timeout=delay):
+                logging.info("Shutdown requested during reconnection delay, aborting")
+                break
         
-        logging.error("Max reconnection attempts reached")
+        if self.stop_event.is_set():
+            logging.info("Reconnection aborted due to shutdown")
+        else:
+            logging.error("Max reconnection attempts reached")
         return False
     
     def _health_monitor(self):
         """Monitor connection health and trigger reconnection if needed"""
         while not self.stop_event.is_set():
             try:
-                time.sleep(self.health_check_interval)
+                # Use wait() instead of sleep() so it's interruptible
+                if self.stop_event.wait(timeout=self.health_check_interval):
+                    # Event was set (shutdown requested), exit gracefully
+                    logging.info("Health monitor received shutdown signal, exiting")
+                    break
                 
+                # Only continue if not shutting down
+                if self.stop_event.is_set():
+                    break
+                    
                 if not self.connected or self.connection_errors >= self.max_connection_errors:
                     logging.warning("Connection health check failed, attempting reconnection")
-                    self.reconnect()
+                    # Don't attempt reconnection if shutting down
+                    if not self.stop_event.is_set():
+                        self.reconnect()
                 
                 # Check if interface is still responsive
-                if self.interface and self.connected:
+                if self.interface and self.connected and not self.stop_event.is_set():
                     try:
                         # Simple health check - try to get node info
                         self.interface.getMyNodeInfo()
@@ -100,6 +122,8 @@ class ConnectionManager:
                         
             except Exception as e:
                 logging.error(f"Error in health monitor: {e}")
+        
+        logging.info("Health monitor thread exiting cleanly")
     
     def is_connected(self):
         """Check if currently connected"""
@@ -114,10 +138,22 @@ class ConnectionManager:
     
     def close(self):
         """Close the connection and stop monitoring"""
+        logging.info("ConnectionManager closing...")
         self.stop_event.set()
+        
+        # Wait for health monitor thread to finish
+        if hasattr(self, 'health_thread') and self.health_thread.is_alive():
+            logging.info("Waiting for health monitor thread to finish...")
+            self.health_thread.join(timeout=2.0)  # 2 second timeout
+            if self.health_thread.is_alive():
+                logging.warning("Health monitor thread did not finish cleanly")
+            else:
+                logging.info("Health monitor thread finished cleanly")
+        
         if self.interface:
             try:
                 self.interface.close()
+                logging.info("Interface closed successfully")
             except Exception as e:
                 logging.warning(f"Error closing interface: {e}")
         self.connected = False

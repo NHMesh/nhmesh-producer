@@ -59,6 +59,7 @@ class TracerouteManager:
         
         # Queue and threading
         self._traceroute_queue = DeduplicatedQueue(key_func=lambda x: x[0])
+        self._shutdown_flag = threading.Event()  # Flag to signal shutdown
         
         # Thread pool for non-blocking traceroute execution with limited concurrency
         max_traceroute_threads = int(os.getenv('TRACEROUTE_MAX_THREADS', 2))
@@ -165,11 +166,38 @@ class TracerouteManager:
         """
         logging.info("[TracerouteManager] Cleaning up and saving final state...")
         
-        # Shutdown the thread pool
+        # Signal shutdown to worker thread
+        self._shutdown_flag.set()
+        logging.info("[TracerouteManager] Shutdown flag set")
+        
+        # Shutdown the thread pool without waiting
         if hasattr(self, '_traceroute_executor'):
             logging.info("[TracerouteManager] Shutting down traceroute thread pool...")
-            self._traceroute_executor.shutdown(wait=True)
-            logging.info("[TracerouteManager] Traceroute thread pool shutdown complete.")
+            
+            # First try graceful shutdown
+            self._traceroute_executor.shutdown(wait=False)
+            
+            # Then try to force shutdown any remaining threads
+            try:
+                # Access the internal thread pool to force shutdown
+                if hasattr(self._traceroute_executor, '_threads'):
+                    for thread in self._traceroute_executor._threads:
+                        if thread.is_alive():
+                            logging.warning(f"[TracerouteManager] Force-stopping thread {thread.name}")
+                            # Note: Python doesn't have thread.stop(), but we can try other approaches
+            except Exception as e:
+                logging.debug(f"[TracerouteManager] Error during force shutdown: {e}")
+            
+            logging.info("[TracerouteManager] Traceroute thread pool shutdown initiated.")
+        
+        # Wait for worker thread to finish (with shorter timeout)
+        if hasattr(self, '_traceroute_worker_thread') and self._traceroute_worker_thread.is_alive():
+            logging.info("[TracerouteManager] Waiting for worker thread to finish...")
+            self._traceroute_worker_thread.join(timeout=0.5)  # Very short timeout
+            if self._traceroute_worker_thread.is_alive():
+                logging.warning("[TracerouteManager] Worker thread did not finish cleanly within 0.5 seconds - likely stuck in traceroute execution")
+            else:
+                logging.info("[TracerouteManager] Worker thread finished cleanly")
         
         self._save_state()
 
@@ -291,6 +319,11 @@ class TracerouteManager:
         Returns:
             bool: True if successful, False otherwise
         """
+        # Early exit if shutdown is requested
+        if self._shutdown_flag.is_set():
+            logging.info(f"[Traceroute] Shutdown requested, skipping traceroute for {node_id}")
+            return False
+            
         node_id = str(node_id)  # Ensure node_id is always a string
         entry = self.node_cache.get_node_info(node_id)
         long_name = entry.get("long_name")
@@ -300,6 +333,11 @@ class TracerouteManager:
         logging.info(f"[Traceroute] Running traceroute for Node {node_id} | Long name: {long_name if long_name else 'UNKNOWN'} | Position: {self._format_position(pos)} | Failures: {failure_count}")
         
         try:
+            # Check shutdown flag before expensive operations
+            if self._shutdown_flag.is_set():
+                logging.info(f"[Traceroute] Shutdown requested during setup, aborting traceroute for {node_id}")
+                return False
+                
             # Log node info before traceroute
             try:
                 info = self.interface.getMyNodeInfo()
@@ -313,8 +351,11 @@ class TracerouteManager:
             logging.debug(f"[Traceroute] About to send traceroute to {node_id} and setting last traceroute time.")
             
             try:
-                # Use thread pool to prevent blocking indefinitely with limited concurrency
-                timeout_seconds = int(os.getenv('TRACEROUTE_SEND_TIMEOUT', 30))
+                # Use much shorter timeout during shutdown
+                if self._shutdown_flag.is_set():
+                    timeout_seconds = 2  # Very short timeout if shutting down
+                else:
+                    timeout_seconds = int(os.getenv('TRACEROUTE_SEND_TIMEOUT', 30))
                 
                 # Submit traceroute to thread pool and wait with timeout
                 future = self._traceroute_executor.submit(
@@ -358,23 +399,34 @@ class TracerouteManager:
         """
         Worker thread that processes traceroute jobs from the queue.
         """
-        while True:
+        while not self._shutdown_flag.is_set():
             try:
-                # Get the next job from the queue (blocks until available)
-                node_id, retries = self._traceroute_queue.get()
+                # Get the next job from the queue with timeout to check shutdown flag
+                try:
+                    node_id, retries = self._traceroute_queue.get(timeout=1.0)
+                except Exception:
+                    # Timeout or empty queue, check shutdown flag and continue
+                    continue
+                    
                 logging.info(f"[Traceroute] Worker picked up job for node {node_id}, attempt {retries+1}.")
                 logging.info(f"[Traceroute] Current queue depth: {self._traceroute_queue.qsize()}")
+                
+                # Check shutdown flag before processing
+                if self._shutdown_flag.is_set():
+                    logging.info("[Traceroute] Worker thread received shutdown signal, exiting")
+                    break
                 
                 # Check if this node is in backoff period
                 if self._is_node_in_backoff(node_id):
                     backoff_remaining = self._node_backoff_until[node_id] - time.time()
                     logging.info(f"[Traceroute] Node {node_id} is in backoff for {backoff_remaining/60:.1f} more minutes, re-queueing for later.")
                     
-                    # Re-queue the job for later processing
-                    self._traceroute_queue.put((node_id, retries))
+                    # Re-queue the job for later processing if not shutting down
+                    if not self._shutdown_flag.is_set():
+                        self._traceroute_queue.put((node_id, retries))
                     
                     # Add a small delay to prevent busy loop when all nodes are in backoff
-                    time.sleep(5)
+                    self._shutdown_flag.wait(timeout=5.0)  # Interruptible sleep
                     continue
                 
                 # Check global cooldown before processing
@@ -385,10 +437,10 @@ class TracerouteManager:
                     wait_time = self._TRACEROUTE_COOLDOWN - time_since_last
                     logging.info(f"[Traceroute] Global cooldown active, sleeping {wait_time:.1f} seconds before processing node {node_id}")
                     
-                    # Sleep in small increments to remain responsive
-                    while wait_time > 0:
+                    # Sleep in small increments to remain responsive to shutdown signal
+                    while wait_time > 0 and not self._shutdown_flag.is_set():
                         sleep_duration = min(wait_time, 1.0)  # Sleep max 1 second at a time
-                        time.sleep(sleep_duration)
+                        self._shutdown_flag.wait(timeout=sleep_duration)  # Interruptible sleep
                         wait_time -= sleep_duration
                         
                         # Re-check if we still need to wait (in case another traceroute completed)
@@ -397,6 +449,11 @@ class TracerouteManager:
                         if remaining_cooldown <= 0:
                             break
                         wait_time = min(wait_time, remaining_cooldown)
+                    
+                    # Check shutdown flag after waiting
+                    if self._shutdown_flag.is_set():
+                        logging.info("[Traceroute] Worker thread received shutdown signal during cooldown, exiting")
+                        break
                 
                 success = self._run_traceroute(node_id)
                 failure_count = self._node_failure_counts.get(node_id, 0)
@@ -405,18 +462,23 @@ class TracerouteManager:
                     logging.error(f"[Traceroute] Failed to traceroute node {node_id} after {retries+1} attempts. Total failures: {failure_count}")
                     
                     # Check if we should retry this node (based on failure count and max retries)
-                    if failure_count < self._MAX_RETRIES:
+                    if failure_count < self._MAX_RETRIES and not self._shutdown_flag.is_set():
                         # Re-queue with incremented retry count if we haven't hit max retries
                         new_retries = retries + 1
                         logging.info(f"[Traceroute] Re-queueing node {node_id} for retry {new_retries+1}/{self._MAX_RETRIES}")
                         self._traceroute_queue.put((node_id, new_retries))
                     else:
-                        logging.warning(f"[Traceroute] Node {node_id} has reached maximum retry limit ({self._MAX_RETRIES}), giving up.")
+                        if self._shutdown_flag.is_set():
+                            logging.info(f"[Traceroute] Shutdown signal received, not re-queueing node {node_id}")
+                        else:
+                            logging.warning(f"[Traceroute] Node {node_id} has reached maximum retry limit ({self._MAX_RETRIES}), giving up.")
                 else:
                     logging.info(f"[Traceroute] Traceroute for node {node_id} completed successfully.")
                     
             except Exception as e:
                 logging.error(f"[Traceroute] Worker encountered error: {e}")
+        
+        logging.info("[Traceroute] Worker thread exiting cleanly")
 
     def process_packet_for_traceroutes(self, node_id, is_new_node):
         """

@@ -8,14 +8,20 @@ import logging
 from os import environ
 import sys
 import signal
-import paho.mqtt.client as mqtt
+import threading
+import time
+import os
 import json
+import base64
+import paho.mqtt.client as mqtt
 from pubsub import pub
 import argparse
 from utils.envdefault import EnvDefault
 from utils.traceroute_manager import TracerouteManager
 from utils.node_cache import NodeCache
 from utils.connection_manager import ConnectionManager
+from meshtastic.protobuf import mesh_pb2
+from google.protobuf import json_format
 import atexit
 
 
@@ -72,13 +78,11 @@ class MeshtasticMQTTHandler:
         self.mqtt_connected = False
         self.mqtt_reconnect_attempts = 0
         self.max_mqtt_reconnect_attempts = 5
+        self._shutdown_event = threading.Event()  # Thread-safe shutdown signal
         
         # Initialize Meshtastic connection
         if not self.connection_manager.connect():
             raise Exception("Failed to establish initial Meshtastic connection")
-        
-        # Subscribe to packet events
-        pub.subscribe(self.onReceive, "meshtastic.receive")
 
         # --- Node Cache and Traceroute Daemon Feature ---
         self.node_cache = NodeCache(self.connection_manager.get_interface())
@@ -93,6 +97,9 @@ class MeshtasticMQTTHandler:
             traceroute_max_backoff,
             traceroute_persistence_file,
         )
+        
+        # Subscribe to packet events AFTER traceroute_manager is initialized
+        pub.subscribe(self.onReceive, "meshtastic.receive")
         
         # Register cleanup handlers
         atexit.register(self.cleanup)
@@ -146,9 +153,22 @@ class MeshtasticMQTTHandler:
         """
         logging.info("[Cleanup] Starting cleanup process...")
         
+        # Stop the main loop first
+        self._shutdown_event.set()  # Signal shutdown to main thread
+        
+        # Cleanup TracerouteManager and save state first
+        if hasattr(self, 'traceroute_manager'):
+            try:
+                logging.info("[Cleanup] Cleaning up TracerouteManager...")
+                self.traceroute_manager.cleanup()
+                logging.info("[Cleanup] TracerouteManager cleaned up.")
+            except Exception as e:
+                logging.error(f"[Cleanup] Error cleaning up TracerouteManager: {e}")
+        
         # Close connection manager (which handles interface cleanup)
         if hasattr(self, 'connection_manager'):
             try:
+                logging.info("[Cleanup] Closing ConnectionManager...")
                 self.connection_manager.close()
                 logging.info("[Cleanup] ConnectionManager closed.")
             except Exception as e:
@@ -157,19 +177,14 @@ class MeshtasticMQTTHandler:
         # Disconnect MQTT
         if hasattr(self, 'mqtt_client'):
             try:
+                logging.info("[Cleanup] Disconnecting MQTT client...")
                 self.mqtt_client.disconnect()
                 self.mqtt_client.loop_stop()
                 logging.info("[Cleanup] MQTT client disconnected.")
             except Exception as e:
                 logging.error(f"[Cleanup] Error disconnecting MQTT: {e}")
         
-        # Cleanup TracerouteManager and save state
-        if hasattr(self, 'traceroute_manager'):
-            try:
-                self.traceroute_manager.cleanup()
-                logging.info("[Cleanup] TracerouteManager cleaned up.")
-            except Exception as e:
-                logging.error(f"[Cleanup] Error cleaning up TracerouteManager: {e}")
+        logging.info("[Cleanup] Cleanup process completed.")
 
     def connect(self):
         """
@@ -186,7 +201,16 @@ class MeshtasticMQTTHandler:
             
             # Connect to MQTT broker
             self.mqtt_client.connect(self.broker, self.port, 60)
-            self.mqtt_client.loop_forever()
+            self.mqtt_client.loop_start()  # Start background loop
+            
+            # Keep main thread alive but interruptible
+            logging.info("Starting main loop, waiting for shutdown signal...")
+            while not self._shutdown_event.is_set():
+                self._shutdown_event.wait(timeout=1.0)  # Interruptible wait
+            
+            logging.info("Main loop exited, stopping MQTT loop...")
+            self.mqtt_client.loop_stop()
+            logging.info("Exiting connect() method...")
             
         except KeyboardInterrupt:
             logging.info("Received KeyboardInterrupt, cleaning up...")
@@ -204,9 +228,6 @@ class MeshtasticMQTTHandler:
         Args:
             packet (bytes|dict|str): The received packet data (could be bytes, JSON string, or dict).
         """
-        import json
-        from meshtastic.protobuf import mesh_pb2
-        import base64
         # Try to decode packet as JSON first
         packet_dict = None
         if isinstance(packet, dict):
@@ -220,7 +241,6 @@ class MeshtasticMQTTHandler:
                     mesh_packet = mesh_pb2.MeshPacket()
                     mesh_packet.ParseFromString(packet)
                     # Convert protobuf to dict
-                    from google.protobuf import json_format
                     packet_dict = json_format.MessageToDict(mesh_packet, preserving_proto_field_name=True)
                 except Exception as e:
                     logging.error(f"Failed to decode packet as protobuf: {e}")
@@ -234,7 +254,6 @@ class MeshtasticMQTTHandler:
                     packet_bytes = base64.b64decode(packet)
                     mesh_packet = mesh_pb2.MeshPacket()
                     mesh_packet.ParseFromString(packet_bytes)
-                    from google.protobuf import json_format
                     packet_dict = json_format.MessageToDict(mesh_packet, preserving_proto_field_name=True)
                 except Exception as e:
                     logging.error(f"Failed to decode packet string as protobuf: {e}")
@@ -297,9 +316,24 @@ if __name__ == "__main__":
         """Handle shutdown signals gracefully."""
         signal_name = signal.Signals(signum).name
         logging.info(f"Received {signal_name}, cleaning up...")
-        if client:
-            client.cleanup()
-        sys.exit(0)
+        
+        try:
+            if client:
+                client.cleanup()
+            logging.info("Cleanup completed successfully")
+        except Exception as e:
+            logging.error(f"Error during cleanup: {e}")
+        
+        # The main thread should exit on its own now that shutdown event is set
+        # If it doesn't exit within a reasonable time, force exit
+        def force_exit():
+            time.sleep(2.0)  # Give main thread 2 seconds to exit gracefully
+            logging.warning("Main thread did not exit gracefully, forcing exit")
+            os._exit(1)
+        
+        # Start force exit timer in background
+        force_exit_thread = threading.Thread(target=force_exit, daemon=True)
+        force_exit_thread.start()
     
     parser = argparse.ArgumentParser(description='Meshtastic MQTT Handler')
     parser.add_argument('--broker', default='mqtt.nhmesh.live', action=EnvDefault, envvar="MQTT_ENDPOINT", help='MQTT broker address')

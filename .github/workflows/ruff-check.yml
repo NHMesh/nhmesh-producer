@@ -44,7 +44,7 @@ jobs:
           key: venv-lint-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --extras dev
 
       - name: Run Ruff Linter
         run: |
@@ -81,7 +81,7 @@ jobs:
           key: venv-format-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --extras dev
 
       # Keep an eye on https://github.com/astral-sh/ruff/issues/10430 to support problem-matchers and/or
       # inline annotations for Actions in the future

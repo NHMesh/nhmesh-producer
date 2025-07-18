@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.2](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.1...v0.1.2) (2025-07-18)
+
+
+### Bug Fixes
+
+* **deps:** update `ruff` requirement from &lt;0.12.0,&gt;=0.11.7 to &gt;=0.11.7,&lt;0.13.0 ([#7](https://github.com/NHMesh/nhmesh-producer/issues/7)) ([03ff1b3](https://github.com/NHMesh/nhmesh-producer/commit/03ff1b39b1cf9b0838a70a070ee9fa8edf9a15eb))
+* logging packets sent to MQTT -  move unhandle message to debug ([#15](https://github.com/NHMesh/nhmesh-producer/issues/15)) ([ae01f34](https://github.com/NHMesh/nhmesh-producer/commit/ae01f343ed61089fcbc83e9ed826d471f9a3da2f))
+
+
+### Documentation
+
+* adding release badge to GHCR ([#13](https://github.com/NHMesh/nhmesh-producer/issues/13)) ([0cd0dc8](https://github.com/NHMesh/nhmesh-producer/commit/0cd0dc8b0149ae9fb23b6b7577b2f6e6d5139cdb))
+
 ## [0.1.1](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.0...v0.1.1) (2025-07-18)
 
 

@@ -6,6 +6,7 @@
 [![PEP 8](https://img.shields.io/badge/code%20style-PEP%208-brightgreen.svg)](https://peps.python.org/pep-0008/)
 [![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 [![Docker](https://img.shields.io/badge/docker-enabled-blue.svg)](https://www.docker.com/)
+[![GHCR](https://img.shields.io/github/v/release/nhmesh/nhmesh-producer?logo=docker&logoColor=white&label=ghcr.io)](https://github.com/nhmesh/nhmesh-producer/pkgs/container/producer)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A resilient Meshtastic MQTT producer with automatic reconnection and connection health monitoring. This standalone producer handles the connection to Meshtastic nodes and publishes received packets to an MQTT broker with enhanced error handling and recovery mechanisms.

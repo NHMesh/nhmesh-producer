@@ -149,6 +149,8 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 
+.ruff_cache/
+
 # Cython debug symbols
 cython_debug/
 
@@ -176,4 +178,4 @@ Desktop.ini
 *.log
 .env.local
 .env.production
-.env.test 
+.env.test

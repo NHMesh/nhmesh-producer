@@ -28,7 +28,7 @@ RUN apk add --no-cache \
     musl-dev \
     python3-dev \
     libffi-dev \
-    openssl-dev 
+    openssl-dev
 
 # Install poetry
 RUN pip install --no-cache-dir poetry
@@ -36,9 +36,9 @@ RUN pip install --no-cache-dir poetry
 # Copy only dependency files to leverage Docker cache
 COPY pyproject.toml poetry.lock* /app/
 
-# Configure poetry and install dependencies
+# Configure poetry and install dependencies (production only)
 RUN poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --no-root
+    poetry install --no-interaction --no-ansi --no-root --only=main
 
 # Now copy the application code
 COPY ./nhmesh_producer /app/nhmesh_producer

@@ -1,14 +1,16 @@
 import queue
 import threading
+from collections.abc import Callable
+from typing import Any
 
 
-class DeduplicatedQueue:
+class DeduplicatedQueue[T]:
     """
     A queue that prevents duplicate items from being added based on a key function.
     Thread-safe and supports the same basic interface as queue.Queue.
     """
 
-    def __init__(self, key_func=None):
+    def __init__(self, key_func: Callable[[T], Any] | None = None) -> None:
         """
         Initialize the deduplicated queue.
 
@@ -16,12 +18,12 @@ class DeduplicatedQueue:
             key_func: Function to extract the key from queue items for deduplication.
                      If None, the item itself is used as the key.
         """
-        self._queue = queue.Queue()
-        self._queued_items = set()
+        self._queue: queue.Queue[T] = queue.Queue()
+        self._queued_items: set[Any] = set()
         self._lock = threading.Lock()
-        self._key_func = key_func or (lambda x: x)
+        self._key_func: Callable[[T], Any] = key_func or (lambda x: x)
 
-    def put(self, item):
+    def put(self, item: T) -> bool:
         """
         Put an item into the queue if it's not already queued.
 
@@ -41,7 +43,7 @@ class DeduplicatedQueue:
             else:
                 return False
 
-    def get(self, block=True, timeout=None):
+    def get(self, block: bool = True, timeout: float | None = None) -> T:
         """
         Get an item from the queue and remove it from the deduplication set.
 
@@ -60,10 +62,10 @@ class DeduplicatedQueue:
 
         return item
 
-    def empty(self):
+    def empty(self) -> bool:
         """Check if the queue is empty."""
         return self._queue.empty()
 
-    def qsize(self):
+    def qsize(self) -> int:
         """Return the approximate size of the queue."""
         return self._queue.qsize()

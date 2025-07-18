@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from utils.number_utils import safe_float_list, safe_process_position
 
@@ -8,7 +9,7 @@ class NodeCache:
     Keeps track of node information extracted from packets.
     """
 
-    def __init__(self, interface):
+    def __init__(self, interface: Any) -> None:
         """
         Initialize the NodeCache.
 
@@ -16,9 +17,11 @@ class NodeCache:
             interface: The Meshtastic interface for accessing node database
         """
         self.interface = interface
-        self._node_cache = {}  # node_id -> {"position": (lat, lon, alt), "long_name": str}
+        self._node_cache: dict[
+            str, dict[str, Any]
+        ] = {}  # node_id -> {"position": (lat, lon, alt), "long_name": str}
 
-    def get_node_info(self, node_id):
+    def get_node_info(self, node_id: str) -> dict[str, Any]:
         """
         Get cached information for a node.
 
@@ -30,7 +33,7 @@ class NodeCache:
         """
         return self._node_cache.get(str(node_id), {})
 
-    def get_all_nodes(self):
+    def get_all_nodes(self) -> list[str]:
         """
         Get all cached node IDs.
 
@@ -39,7 +42,7 @@ class NodeCache:
         """
         return list(self._node_cache.keys())
 
-    def has_node(self, node_id):
+    def has_node(self, node_id: str) -> bool:
         """
         Check if a node exists in the cache.
 
@@ -51,7 +54,9 @@ class NodeCache:
         """
         return str(node_id) in self._node_cache
 
-    def update_from_packet(self, packet, traceroute_manager=None):
+    def update_from_packet(
+        self, packet: dict[str, Any], traceroute_manager: Any = None
+    ) -> bool:
         """
         Update node cache from incoming packet and process packet data.
 
@@ -77,7 +82,7 @@ class NodeCache:
         decoded = packet.get("decoded", {})
 
         # Helper to get bytes from payload
-        def get_payload_bytes(payload):
+        def get_payload_bytes(payload: Any) -> bytes | None:
             if isinstance(payload, bytes):
                 return payload
             elif isinstance(payload, str):

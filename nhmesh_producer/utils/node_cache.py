@@ -194,7 +194,7 @@ class NodeCache:
         # Log unhandled port numbers for debugging
         portnum = decoded.get("portnum")
         if portnum and portnum not in ["POSITION_APP", "USER_APP", "TRACEROUTE_APP"]:
-            logging.info(
+            logging.debug(
                 f"[NodeCache] Received unhandled packet type '{portnum}' from node {node_id}"
             )
 

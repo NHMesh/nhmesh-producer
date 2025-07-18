@@ -27,7 +27,7 @@ from utils.node_cache import NodeCache
 from utils.traceroute_manager import TracerouteManager
 
 logging.basicConfig(
-    level=environ.get("LOG_LEVEL", "DEBUG").upper(),
+    level=environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s - %(levelname)s - %(message)s",
     stream=sys.stdout,
 )

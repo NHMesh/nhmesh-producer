@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.0...v0.1.1) (2025-07-18)
+
+
+### Bug Fixes
+
+* removing extra, unused dependencies from project ([c54821b](https://github.com/NHMesh/nhmesh-producer/commit/c54821b0342cb3470473f61678a342f238f670f2))
+
 ## 0.1.0 (2025-07-18)
 
 

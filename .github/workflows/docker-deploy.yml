@@ -73,6 +73,7 @@ jobs:
           script: |
             const release = context.payload.release;
             const tags = `${{ steps.meta.outputs.tags }}`.split('\n');
+            const repoOwner = '${{ github.repository_owner }}'.toLowerCase();
 
             const dockerInfo = `
             ## 🐳 Docker Images
@@ -81,10 +82,10 @@ jobs:
 
             \`\`\`bash
             # Pull specific version
-            docker pull ghcr.io/${{ github.repository_owner }}/producer:${{ github.ref_name }}
+            docker pull ghcr.io/${repoOwner}/producer:${{ github.ref_name }}
 
             # Pull latest
-            docker pull ghcr.io/${{ github.repository_owner }}/producer:latest
+            docker pull ghcr.io/${repoOwner}/producer:latest
             \`\`\`
 
             **Available tags:**
@@ -110,6 +111,7 @@ jobs:
           script: |
             const tags = `${{ steps.meta.outputs.tags }}`.split('\n');
             const prNumber = context.payload.pull_request.number;
+            const repoOwner = '${{ github.repository_owner }}'.toLowerCase();
 
             const dockerInfo = `
             ## 🐳 Docker Images Built for PR #${prNumber}
@@ -118,7 +120,7 @@ jobs:
 
             \`\`\`bash
             # Pull PR image for testing
-            docker pull ghcr.io/${{ github.repository_owner }}/producer:pr-${prNumber}
+            docker pull ghcr.io/${repoOwner}/producer:pr-${prNumber}
             \`\`\`
 
             **Available tags:**

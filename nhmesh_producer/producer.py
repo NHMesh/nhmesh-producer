@@ -335,6 +335,10 @@ class MeshtasticMQTTHandler:
         topic_node = f"{self.topic}/{payload['fromId']}"
         payload_json = json.dumps(payload, default=str)
 
+        logging.info(
+            f"Publishing packet from '{payload['fromId']}' to MQTT topic '{topic_node}'"
+        )
+
         # Publish the JSON payload to the specified topic
         self.mqtt_client.publish(topic_node, payload_json)
 

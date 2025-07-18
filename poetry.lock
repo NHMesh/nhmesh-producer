@@ -906,4 +906,4 @@ dev = ["pyright", "ruff", "types-paho-mqtt", "types-protobuf"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "b2c0b2f631ff19cf6f4a81c74a6f565b38c7f5e81844270b698c0a3468410979"
+content-hash = "bd46de3fb1b6eac34314e1dce2dcaa658bde343163c9c2b6fb4a56a72f1d1919"

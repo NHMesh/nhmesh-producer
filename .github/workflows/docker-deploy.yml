@@ -1,7 +1,13 @@
 name: Build and Publish Docker Image to GHCR.io
 
 on:
-  push:
+  release:
+    types:
+      - published
+      - released
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build-and-push:
@@ -21,24 +27,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/producer
           tags: |
-            type=sha,format=long
-            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Get current date
         id: date
         run: echo "date=$(date --rfc-3339=seconds | sed 's/ /T/g')" >> $GITHUB_OUTPUT
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -55,3 +65,100 @@ jobs:
             IMAGE_TITLE=${{ github.repository_owner }}/producer
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Add Docker image info to release
+        if: github.event_name == 'release'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = context.payload.release;
+            const tags = `${{ steps.meta.outputs.tags }}`.split('\n');
+
+            const dockerInfo = `
+            ## 🐳 Docker Images
+
+            This release is available as Docker images:
+
+            \`\`\`bash
+            # Pull specific version
+            docker pull ghcr.io/${{ github.repository_owner }}/producer:${{ github.ref_name }}
+
+            # Pull latest
+            docker pull ghcr.io/${{ github.repository_owner }}/producer:latest
+            \`\`\`
+
+            **Available tags:**
+            ${tags.map(tag => `- \`${tag}\``).join('\n')}
+
+            **Registry:** [GitHub Container Registry](https://github.com/${{ github.repository }}/pkgs/container/producer)
+            `;
+
+            const currentBody = release.body || '';
+            const updatedBody = currentBody + '\n' + dockerInfo;
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              body: updatedBody
+            });
+
+      - name: Add PR comment with Docker info
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tags = `${{ steps.meta.outputs.tags }}`.split('\n');
+            const prNumber = context.payload.pull_request.number;
+
+            const dockerInfo = `
+            ## 🐳 Docker Images Built for PR #${prNumber}
+
+            This PR has been built and published as Docker images for testing:
+
+            \`\`\`bash
+            # Pull PR image for testing
+            docker pull ghcr.io/${{ github.repository_owner }}/producer:pr-${prNumber}
+            \`\`\`
+
+            **Available tags:**
+            ${tags.map(tag => `- \`${tag}\``).join('\n')}
+
+            **Registry:** [GitHub Container Registry](https://github.com/${{ github.repository }}/pkgs/container/producer)
+
+            > 🔄 This image will be updated automatically when new commits are pushed to this PR.
+            >
+            > **Last updated:** ${new Date().toISOString()} (commit: ${context.sha.substring(0, 7)})
+            `;
+
+            // Try to find and update existing comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            });
+
+            const botComment = comments.data.find(comment =>
+              comment.user.login === 'github-actions[bot]' &&
+              comment.body.includes('🐳 Docker Images Built for PR')
+            );
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: dockerInfo
+              });
+              console.log('Updated existing Docker comment');
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: dockerInfo
+              });
+              console.log('Created new Docker comment');
+            }

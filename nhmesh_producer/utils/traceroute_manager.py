@@ -488,6 +488,8 @@ class TracerouteManager:
             logging.info(
                 f"[Traceroute] Interface error during traceroute for node {node_id}: {e}"
             )
+            # Notify connection manager of the error for immediate handling
+            self.connection_manager.notify_connection_error(e)
             return "connection_error"
 
     def _traceroute_worker(self) -> None:

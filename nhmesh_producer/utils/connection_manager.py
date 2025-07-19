@@ -19,7 +19,7 @@ class ConnectionManager:
         node_ip: str,
         reconnect_attempts: int = 5,
         reconnect_delay: int = 5,
-        health_check_interval: int = 30,
+        health_check_interval: int = 10,  # Reduced from 30 to detect issues faster
     ) -> None:
         self.node_ip = node_ip
         self.reconnect_attempts = reconnect_attempts
@@ -70,9 +70,16 @@ class ConnectionManager:
                 return True
 
             except Exception as e:
-                logging.error(f"Failed to connect to Meshtastic node: {e}")
+                logging.warning(f"Failed to connect to Meshtastic node: {e}")
                 self.connected = False
                 self.connection_errors += 1
+                # Clean up any partially created interface
+                if self.interface:
+                    try:
+                        self.interface.close()
+                    except Exception:
+                        pass
+                    self.interface = None
                 return False
 
     def reconnect(self) -> bool:
@@ -138,6 +145,17 @@ class ConnectionManager:
                         # Simple health check - try to get node info
                         self.interface.getMyNodeInfo()
                         self.last_heartbeat = time.time()
+                        logging.debug("Health check passed")
+                    except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                        logging.warning(f"Connection lost during health check: {e}")
+                        self.connected = False
+                        self.connection_errors += 1
+                        # Force close the interface to clean up internal threads
+                        try:
+                            self.interface.close()
+                        except Exception:
+                            pass
+                        self.interface = None
                     except Exception as e:
                         logging.warning(f"Health check failed: {e}")
                         self.connected = False
@@ -159,6 +177,21 @@ class ConnectionManager:
                 return None
         return self.interface
 
+    def get_ready_interface(self) -> Any | None:
+        """
+        Get an interface that's ready for operations.
+
+        Returns:
+            The interface if available and connected, None if unavailable
+        """
+        if not self.is_connected():
+            logging.info("Interface not connected, attempting reconnection...")
+            if not self.reconnect():
+                logging.warning("Interface reconnection failed, no interface available")
+                return None
+
+        return self.interface
+
     def close(self) -> None:
         """Close the connection and stop monitoring"""
         logging.info("ConnectionManager closing...")
@@ -178,5 +211,5 @@ class ConnectionManager:
                 self.interface.close()
                 logging.info("Interface closed successfully")
             except Exception as e:
-                logging.warning(f"Error closing interface: {e}")
+                logging.error(f"Error closing interface during shutdown: {e}")
         self.connected = False

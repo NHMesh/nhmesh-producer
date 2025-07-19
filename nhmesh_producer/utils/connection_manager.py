@@ -70,7 +70,7 @@ class ConnectionManager:
                 return True
 
             except Exception as e:
-                logging.error(f"Failed to connect to Meshtastic node: {e}")
+                logging.warning(f"Failed to connect to Meshtastic node: {e}")
                 self.connected = False
                 self.connection_errors += 1
                 return False
@@ -159,6 +159,21 @@ class ConnectionManager:
                 return None
         return self.interface
 
+    def get_ready_interface(self) -> Any | None:
+        """
+        Get an interface that's ready for operations.
+
+        Returns:
+            The interface if available and connected, None if unavailable
+        """
+        if not self.is_connected():
+            logging.info("Interface not connected, attempting reconnection...")
+            if not self.reconnect():
+                logging.warning("Interface reconnection failed, no interface available")
+                return None
+
+        return self.interface
+
     def close(self) -> None:
         """Close the connection and stop monitoring"""
         logging.info("ConnectionManager closing...")
@@ -178,5 +193,5 @@ class ConnectionManager:
                 self.interface.close()
                 logging.info("Interface closed successfully")
             except Exception as e:
-                logging.warning(f"Error closing interface: {e}")
+                logging.error(f"Error closing interface during shutdown: {e}")
         self.connected = False

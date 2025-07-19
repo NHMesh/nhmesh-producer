@@ -107,8 +107,8 @@ class MeshtasticMQTTHandler:
 
         # Pass configuration parameters directly to TracerouteManager
         self.traceroute_manager = TracerouteManager(
-            self.connection_manager.get_interface(),
             self.node_cache,
+            self.connection_manager,
             traceroute_cooldown,
             traceroute_interval,
             traceroute_max_retries,
@@ -141,14 +141,11 @@ class MeshtasticMQTTHandler:
         logging.debug(f"Message published: {mid}")
 
     def _update_interface_references(self) -> None:
-        """Update interface references in NodeCache and TracerouteManager after reconnection"""
+        """Update interface references in NodeCache after reconnection"""
         interface = self.connection_manager.get_interface()
         if interface:
             self.node_cache.interface = interface
-            self.traceroute_manager.interface = interface
-            logging.info(
-                "Updated interface references in NodeCache and TracerouteManager"
-            )
+            logging.info("Updated interface reference in NodeCache")
 
     def _update_cache_from_packet(self, packet: dict[str, Any]) -> None:
         """

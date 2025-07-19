@@ -5,9 +5,16 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from utils.deduplicated_queue import DeduplicatedQueue
+
+if TYPE_CHECKING:
+    from utils.connection_manager import ConnectionManager
+    from utils.node_cache import NodeCache
+
+# Type alias for traceroute result
+TracerouteResult = Literal["success", "connection_error", "failure"]
 
 
 class TracerouteManager:
@@ -26,8 +33,8 @@ class TracerouteManager:
 
     def __init__(
         self,
-        interface: Any,
-        node_cache: Any,
+        node_cache: "NodeCache",
+        connection_manager: "ConnectionManager",
         traceroute_cooldown: int | None = None,
         traceroute_interval: int | None = None,
         max_retries: int | None = None,
@@ -38,16 +45,16 @@ class TracerouteManager:
         Initialize the TracerouteManager.
 
         Args:
-            interface: The Meshtastic interface for sending traceroutes
             node_cache: The NodeCache instance for node information lookup
+            connection_manager: ConnectionManager for interface access and connection health
             traceroute_cooldown (int): Minimum time between any traceroute operations in seconds (default from env or 180)
             traceroute_interval (int): Interval between periodic traceroutes in seconds (default from env or 43200)
             max_retries (int): Maximum number of retry attempts (default from env or 3)
             max_backoff (int): Maximum backoff time in seconds (default from env or 86400)
             persistence_file (str): Path to file for persisting retry/backoff data (default from env or '/tmp/traceroute_state.json')
         """
-        self.interface = interface
         self.node_cache = node_cache
+        self.connection_manager = connection_manager
 
         # Configuration with environment variable defaults or passed parameters
         self._TRACEROUTE_INTERVAL: int = (
@@ -400,7 +407,7 @@ class TracerouteManager:
             s += f" {alt}m"
         return s
 
-    def _run_traceroute(self, node_id: str) -> bool:
+    def _run_traceroute(self, node_id: str) -> TracerouteResult:
         """
         Execute a traceroute for the given node.
 
@@ -408,14 +415,17 @@ class TracerouteManager:
             node_id (str): The node ID to traceroute
 
         Returns:
-            bool: True if successful, False otherwise
+            TracerouteResult:
+                - "success" if successful
+                - "connection_error" for interface issues
+                - "failure" for actual traceroute failures
         """
         # Early exit if shutdown is requested
         if self._shutdown_flag.is_set():
             logging.info(
                 f"[Traceroute] Shutdown requested, skipping traceroute for {node_id}"
             )
-            return False
+            return "connection_error"
 
         node_id = str(node_id)  # Ensure node_id is always a string
         entry = self.node_cache.get_node_info(node_id)
@@ -427,84 +437,58 @@ class TracerouteManager:
             f"[Traceroute] Running traceroute for Node {node_id} | Long name: {long_name if long_name else 'UNKNOWN'} | Position: {self._format_position(pos)} | Failures: {failure_count}"
         )
 
+        # Get interface from connection manager
+        interface = self.connection_manager.get_ready_interface()
+        if interface is None:
+            logging.info(
+                f"[Traceroute] No interface available for traceroute to node {node_id}, will retry when connection is restored"
+            )
+            return "connection_error"
+
+        # Update global traceroute time
+        self._last_global_traceroute_time = time.time()
+        logging.debug(
+            f"[Traceroute] About to send traceroute to {node_id} and setting last traceroute time."
+        )
+
+        # Execute the traceroute
+        return self._execute_traceroute(interface, node_id)
+
+    def _execute_traceroute(self, interface: Any, node_id: str) -> TracerouteResult:
+        """Execute the actual traceroute command."""
+        timeout_seconds = (
+            2
+            if self._shutdown_flag.is_set()
+            else int(os.getenv("TRACEROUTE_SEND_TIMEOUT", 30))
+        )
+        future = None
+
         try:
-            # Check shutdown flag before expensive operations
-            if self._shutdown_flag.is_set():
-                logging.info(
-                    f"[Traceroute] Shutdown requested during setup, aborting traceroute for {node_id}"
-                )
-                return False
-
-            # Log node info before traceroute
-            try:
-                info = self.interface.getMyNodeInfo()
-                logging.debug(f"[Traceroute] Node info before traceroute: {info}")
-            except Exception as e:
-                logging.error(
-                    f"[Traceroute] Failed to get node info before traceroute: {e}"
-                )
-
-            # Update global traceroute time before attempting
-            self._last_global_traceroute_time = time.time()
-
-            logging.debug(
-                f"[Traceroute] About to send traceroute to {node_id} and setting last traceroute time."
+            # Submit traceroute to thread pool
+            future = self._traceroute_executor.submit(
+                interface.sendTraceRoute,
+                dest=node_id.replace("!", ""),  # Remove '!' prefix if present
+                hopLimit=7,
             )
 
-            try:
-                # Use much shorter timeout during shutdown
-                if self._shutdown_flag.is_set():
-                    timeout_seconds = 2  # Very short timeout if shutting down
-                else:
-                    timeout_seconds = int(os.getenv("TRACEROUTE_SEND_TIMEOUT", 30))
+            # Wait for completion
+            future.result(timeout=timeout_seconds)
+            logging.info(f"[Traceroute] Traceroute command sent for node {node_id}.")
+            return "success"
 
-                # Submit traceroute to thread pool and wait with timeout
-                future = self._traceroute_executor.submit(
-                    self.interface.sendTraceRoute,
-                    dest=node_id.replace("!", ""),  # Remove '!' prefix if present
-                    hopLimit=7,
-                )
-
-                try:
-                    # Wait for completion with timeout
-                    future.result(timeout=timeout_seconds)
-                    logging.info(
-                        f"[Traceroute] Traceroute command sent for node {node_id}."
-                    )
-                    # Note: Success will be recorded when we receive the TRACEROUTE_APP response packet
-                    return True
-
-                except FutureTimeoutError:
-                    logging.error(
-                        f"[Traceroute] Traceroute to node {node_id} timed out after {timeout_seconds} seconds"
-                    )
-                    # Cancel the future to prevent resource leaks
-                    future.cancel()
-                    self._record_traceroute_failure(node_id)
-                    return False
-
-                except Exception as e:
-                    logging.error(
-                        f"[Traceroute] Error in traceroute execution for node {node_id}: {e}"
-                    )
-                    self._record_traceroute_failure(node_id)
-                    return False
-
-            except Exception as e:
-                logging.error(
-                    f"[Traceroute] Error sending traceroute to node {node_id}: {e}"
-                )
-                # Record failure and check if we should continue retrying
-                self._record_traceroute_failure(node_id)
-                return False
-
-        except Exception as e:
+        except FutureTimeoutError:
             logging.error(
-                f"[Traceroute] Unexpected error sending traceroute to node {node_id}: {e}"
+                f"[Traceroute] Traceroute to node {node_id} timed out after {timeout_seconds} seconds"
             )
-            # Record failure for unexpected errors too
+            if future:
+                future.cancel()
             self._record_traceroute_failure(node_id)
-            return False
+            return "failure"
+        except Exception as e:
+            logging.info(
+                f"[Traceroute] Interface error during traceroute for node {node_id}: {e}"
+            )
+            return "connection_error"
 
     def _traceroute_worker(self) -> None:
         """
@@ -584,12 +568,23 @@ class TracerouteManager:
                         )
                         break
 
-                success = self._run_traceroute(node_id)
+                result = self._run_traceroute(node_id)
                 failure_count = self._node_failure_counts.get(node_id, 0)
 
-                if not success:
-                    logging.error(
-                        f"[Traceroute] Failed to traceroute node {node_id} after {retries + 1} attempts. Total failures: {failure_count}"
+                if result == "success":
+                    logging.info(
+                        f"[Traceroute] Traceroute for node {node_id} completed successfully."
+                    )
+                elif result == "connection_error":
+                    logging.info(
+                        f"[Traceroute] Connection issue for node {node_id}, re-queueing without counting as failure"
+                    )
+                    # Re-queue immediately without incrementing retry count - this is a connection issue
+                    if not self._shutdown_flag.is_set():
+                        self._traceroute_queue.put((node_id, retries))
+                elif result == "failure":
+                    logging.info(
+                        f"[Traceroute] Traceroute failed for node {node_id} after {retries + 1} attempts. Total failures: {failure_count}"
                     )
 
                     # Check if we should retry this node (based on failure count and max retries)
@@ -609,13 +604,9 @@ class TracerouteManager:
                                 f"[Traceroute] Shutdown signal received, not re-queueing node {node_id}"
                             )
                         else:
-                            logging.warning(
+                            logging.info(
                                 f"[Traceroute] Node {node_id} has reached maximum retry limit ({self._MAX_RETRIES}), giving up."
                             )
-                else:
-                    logging.info(
-                        f"[Traceroute] Traceroute for node {node_id} completed successfully."
-                    )
 
             except Exception as e:
                 logging.error(f"[Traceroute] Worker encountered error: {e}")

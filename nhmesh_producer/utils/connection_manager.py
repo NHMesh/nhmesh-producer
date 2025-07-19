@@ -19,7 +19,7 @@ class ConnectionManager:
         node_ip: str,
         reconnect_attempts: int = 5,
         reconnect_delay: int = 5,
-        health_check_interval: int = 30,
+        health_check_interval: int = 10,  # Reduced from 30 to detect issues faster
     ) -> None:
         self.node_ip = node_ip
         self.reconnect_attempts = reconnect_attempts
@@ -73,6 +73,13 @@ class ConnectionManager:
                 logging.warning(f"Failed to connect to Meshtastic node: {e}")
                 self.connected = False
                 self.connection_errors += 1
+                # Clean up any partially created interface
+                if self.interface:
+                    try:
+                        self.interface.close()
+                    except Exception:
+                        pass
+                    self.interface = None
                 return False
 
     def reconnect(self) -> bool:
@@ -138,6 +145,17 @@ class ConnectionManager:
                         # Simple health check - try to get node info
                         self.interface.getMyNodeInfo()
                         self.last_heartbeat = time.time()
+                        logging.debug("Health check passed")
+                    except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                        logging.warning(f"Connection lost during health check: {e}")
+                        self.connected = False
+                        self.connection_errors += 1
+                        # Force close the interface to clean up internal threads
+                        try:
+                            self.interface.close()
+                        except Exception:
+                            pass
+                        self.interface = None
                     except Exception as e:
                         logging.warning(f"Health check failed: {e}")
                         self.connected = False

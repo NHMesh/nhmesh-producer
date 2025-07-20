@@ -42,24 +42,60 @@ class ConnectionManager:
 
     def _is_socket_connected(self, sock: socket.socket) -> bool:
         """
-        Check if socket is still connected using direct socket inspection.
-        This is much faster and more reliable than the library's internal checks.
+        Check if socket is still connected using multiple detection methods.
+        This handles both graceful disconnections and physical network failures.
 
         Based on solution from: https://github.com/meshtastic/python/issues/765#issuecomment-2817305288
+        Enhanced to detect physical disconnections.
         """
         try:
-            # Use select to check if socket has data available for reading
+            # Method 1: Check if socket has data available for reading (detects graceful close)
             r, _, _ = select.select([sock], [], [], 0)
             if r:
                 # Socket has data, peek at it without consuming
                 data = sock.recv(1, socket.MSG_PEEK)
                 if not data:
-                    # Empty data means connection closed
+                    # Empty data means connection closed gracefully
+                    logging.debug("[ConnectionManager] Socket gracefully closed (empty data)")
                     return False
-            # Socket is connected (either no data pending or data available)
+
+            # Method 2: Try to send a small amount of data to detect physical disconnections
+            # Use SO_ERROR to check for socket errors
+            error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+            if error:
+                logging.debug(f"[ConnectionManager] Socket error detected: {error}")
+                return False
+
+            # Method 3: Try a non-blocking send to detect broken connections
+            # Send 0 bytes which should succeed if connection is alive
+            try:
+                sock.send(b'', socket.MSG_DONTWAIT)
+            except OSError as e:
+                # Check for specific connection-related errors
+                if e.errno in (32, 104, 110):  # EPIPE, ECONNRESET, ETIMEDOUT
+                    logging.debug(f"[ConnectionManager] Socket physical disconnection detected: {e}")
+                    return False
+                elif e.errno == 11:  # EAGAIN/EWOULDBLOCK - expected for non-blocking operations
+                    pass  # This is normal for non-blocking sockets
+                else:
+                    # Other OSErrors might indicate connection problems
+                    logging.debug(f"[ConnectionManager] Socket send error: {e}")
+                    return False
+
+            # Method 4: Check if socket is writable (can detect some physical disconnections)
+            # Use a very short timeout to avoid blocking
+            _, w, _ = select.select([], [sock], [], 0.1)
+            if not w:
+                # Socket not ready for writing within timeout - might indicate network issues
+                # But this could also be normal if the send buffer is full, so don't fail immediately
+                logging.debug("[ConnectionManager] Socket not immediately writable")
+
+            # Socket appears to be connected
             return True
-        except OSError:
-            # Any socket error means disconnected
+
+        except OSError as e:
+            # Any socket error during checking means disconnected
+            logging.debug(f"[ConnectionManager] Socket check error: {e}")
             return False
 
     def connect(self) -> bool:
@@ -173,6 +209,44 @@ class ConnectionManager:
                     except Exception:
                         pass
                     self.interface = None
+
+                # Additional aggressive check: try to actually use the interface to detect network issues
+                # This will help catch physical disconnections that socket-level checks might miss
+                elif self.interface and socket_connected and meshtastic_connected:
+                    try:
+                        # Try a lightweight operation that requires network communication
+                        # This should fail quickly if the network cable is unplugged
+                        original_timeout = None
+                        if hasattr(self.interface, 'socket'):
+                            original_timeout = self.interface.socket.gettimeout()
+                            self.interface.socket.settimeout(3.0)  # Short timeout for health check
+
+                        # Try to get node info - this requires actual network communication
+                        test_node_info = self.interface.getMyNodeInfo()
+                        if test_node_info is None:
+                            logging.warning("[ConnectionManager] Health check failed - node info returned None")
+                            self.connection_errors += 1
+                        else:
+                            # Update last heartbeat on successful communication
+                            self.last_heartbeat = time.time()
+                            logging.info("[ConnectionManager] Health check passed - network communication successful")
+
+                        # Restore original timeout
+                        if original_timeout is not None and hasattr(self.interface, 'socket'):
+                            self.interface.socket.settimeout(original_timeout)
+
+                    except (BrokenPipeError, ConnectionResetError, OSError, TimeoutError) as e:
+                        logging.warning(f"[ConnectionManager] Network health check failed (physical disconnection?): {e}")
+                        self.connection_errors += 1
+                        # Force close the interface to clean up internal threads
+                        try:
+                            self.interface.close()
+                        except Exception:
+                            pass
+                        self.interface = None
+                    except Exception as e:
+                        logging.warning(f"[ConnectionManager] Health check failed with unexpected error: {e}")
+                        self.connection_errors += 1
 
                 if (
                     not self.is_connected()

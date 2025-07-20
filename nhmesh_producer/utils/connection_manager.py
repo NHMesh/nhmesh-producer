@@ -3,13 +3,14 @@ ConnectionManager for managing Meshtastic interface connections with automatic r
 """
 
 import logging
+import select
+import socket
 import threading
 import time
 from typing import Any
 
 import meshtastic
 import meshtastic.tcp_interface
-from pubsub import pub
 
 
 class ConnectionManager:
@@ -34,29 +35,32 @@ class ConnectionManager:
         self.stop_event = threading.Event()
         self.node_info: dict[str, Any] | None = None
         self.connected_node_id: str | None = None
-        self._meshtastic_connected = False  # Track connection state from pubsub events
-
-        # Subscribe to Meshtastic connection events
-        pub.subscribe(self._on_connection_established, "meshtastic.connection.established")
-        pub.subscribe(self._on_connection_lost, "meshtastic.connection.lost")
 
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         self.health_thread.start()
 
-    def _on_connection_established(self, interface: Any) -> None:
-        """Callback for when Meshtastic reports connection established"""
-        if interface == self.interface:
-            logging.info("[ConnectionManager] Pubsub: Connection established")
-            self._meshtastic_connected = True
-            self.connection_errors = 0
+    def _is_socket_connected(self, sock: socket.socket) -> bool:
+        """
+        Check if socket is still connected using direct socket inspection.
+        This is much faster and more reliable than the library's internal checks.
 
-    def _on_connection_lost(self, interface: Any) -> None:
-        """Callback for when Meshtastic reports connection lost"""
-        if interface == self.interface:
-            logging.warning("[ConnectionManager] Pubsub: Connection lost")
-            self._meshtastic_connected = False
-            self.connection_errors += 1
+        Based on solution from: https://github.com/meshtastic/python/issues/765#issuecomment-2817305288
+        """
+        try:
+            # Use select to check if socket has data available for reading
+            r, _, _ = select.select([sock], [], [], 0)
+            if r:
+                # Socket has data, peek at it without consuming
+                data = sock.recv(1, socket.MSG_PEEK)
+                if not data:
+                    # Empty data means connection closed
+                    return False
+            # Socket is connected (either no data pending or data available)
+            return True
+        except OSError:
+            # Any socket error means disconnected
+            return False
 
     def connect(self) -> bool:
         """Establish connection to Meshtastic node with error handling"""
@@ -83,7 +87,6 @@ class ConnectionManager:
 
                 self.connection_errors = 0
                 self.last_heartbeat = time.time()
-                self._meshtastic_connected = True  # Will be confirmed by pubsub event
 
                 logging.info(f"[ConnectionManager] Successfully connected to node {self.connected_node_id}")
                 logging.info(f"[ConnectionManager] Connection state: errors={self.connection_errors}")
@@ -92,7 +95,6 @@ class ConnectionManager:
             except Exception as e:
                 logging.warning(f"[ConnectionManager] Failed to connect to Meshtastic node: {e}")
                 self.connection_errors += 1
-                self._meshtastic_connected = False
                 logging.info(f"[ConnectionManager] Connection failed - errors={self.connection_errors}")
                 # Clean up any partially created interface
                 if self.interface:
@@ -136,7 +138,7 @@ class ConnectionManager:
         return False
 
     def _health_monitor(self) -> None:
-        """Monitor connection health and trigger reconnection if needed"""
+        """Monitor connection health using direct socket inspection and trigger reconnection if needed"""
         logging.info(f"[ConnectionManager] Health monitor starting with {self.health_check_interval}s interval")
         while not self.stop_event.is_set():
             try:
@@ -150,7 +152,27 @@ class ConnectionManager:
                 if self.stop_event.is_set():
                     break
 
-                logging.info(f"[ConnectionManager] Health monitor running check - connected: {self.is_connected()}, errors: {self.connection_errors}/{self.max_connection_errors}")
+                # Check socket-level connection health
+                socket_connected = False
+                meshtastic_connected = False
+                if self.interface:
+                    if hasattr(self.interface, 'socket'):
+                        socket_connected = self._is_socket_connected(self.interface.socket)
+                    if hasattr(self.interface, 'isConnected'):
+                        meshtastic_connected = self.interface.isConnected.is_set()
+
+                logging.info(f"[ConnectionManager] Health monitor check - socket_connected: {socket_connected}, meshtastic_connected: {meshtastic_connected}, errors: {self.connection_errors}/{self.max_connection_errors}")
+
+                # Disconnect detected at socket level
+                if self.interface and not socket_connected:
+                    logging.warning("[ConnectionManager] Socket-level disconnect detected, marking connection as lost")
+                    self.connection_errors += 1
+                    # Force close the interface to clean up internal threads
+                    try:
+                        self.interface.close()
+                    except Exception:
+                        pass
+                    self.interface = None
 
                 if (
                     not self.is_connected()
@@ -163,48 +185,29 @@ class ConnectionManager:
                     if not self.stop_event.is_set():
                         self.reconnect()
 
-                # Check if interface is still responsive
-                if self.interface and self.is_connected() and not self.stop_event.is_set():
-                    try:
-                        logging.info("[ConnectionManager] Performing interface responsiveness check...")
-                        # Simple health check - try to get node info (pubsub will handle disconnect events)
-                        self.interface.getMyNodeInfo()
-                        self.last_heartbeat = time.time()
-                        logging.info("[ConnectionManager] Health check passed - interface responsive")
-                    except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                        logging.warning(f"[ConnectionManager] Connection lost during health check: {e}")
-                        self.connection_errors += 1
-                        self._meshtastic_connected = False
-                        # Force close the interface to clean up internal threads
-                        try:
-                            self.interface.close()
-                        except Exception:
-                            pass
-                        self.interface = None
-                    except Exception as e:
-                        logging.warning(f"[ConnectionManager] Health check failed: {e}")
-                        self.connection_errors += 1
-                else:
-                    if not self.interface:
-                        logging.info("[ConnectionManager] Health check skipped - no interface")
-                    elif not self.is_connected():
-                        logging.info("[ConnectionManager] Health check skipped - not connected")
-                    else:
-                        logging.info("[ConnectionManager] Health check skipped - shutdown requested")
-
             except Exception as e:
                 logging.error(f"[ConnectionManager] Error in health monitor: {e}")
 
         logging.info("[ConnectionManager] Health monitor thread exiting cleanly")
 
     def is_connected(self) -> bool:
-        """Check if currently connected using Meshtastic pubsub events"""
+        """Check if currently connected using both socket-level and Meshtastic library state"""
         if not self.interface:
             return False
 
-        # Use pubsub connection state as primary source of truth
-        connected = self._meshtastic_connected
-        logging.info(f"[ConnectionManager] is_connected() = {connected} (interface exists, pubsub_connected={connected})")
+        # Check socket-level connection health first (fast and reliable)
+        socket_connected = False
+        if hasattr(self.interface, 'socket'):
+            socket_connected = self._is_socket_connected(self.interface.socket)
+
+        # Check Meshtastic library connection state
+        meshtastic_connected = False
+        if hasattr(self.interface, 'isConnected'):
+            meshtastic_connected = self.interface.isConnected.is_set()
+
+        # Both socket and library must agree on connection state
+        connected = socket_connected and meshtastic_connected
+        logging.info(f"[ConnectionManager] is_connected() = {connected} (socket={socket_connected}, meshtastic={meshtastic_connected})")
         return connected
 
     def get_interface(self) -> Any | None:
@@ -227,32 +230,25 @@ class ConnectionManager:
                 logging.error("[ConnectionManager] Interface reconnection failed, no interface available")
                 return None
 
-        # Do a quick responsiveness check before returning the interface
-        try:
-            if self.interface:
-                self.interface.getMyNodeInfo()
-                return self.interface
-        except (BrokenPipeError, ConnectionResetError, OSError) as e:
-            logging.warning(f"[ConnectionManager] Interface became unresponsive during check: {e}")
-            self.connection_errors += 1
-            # Force close the interface to clean up internal threads
-            try:
-                self.interface.close()
-            except Exception:
-                pass
-            self.interface = None
+        # Do a quick socket-level check before returning the interface
+        if self.interface and hasattr(self.interface, 'socket'):
+            if not self._is_socket_connected(self.interface.socket):
+                logging.warning("[ConnectionManager] Interface socket disconnected during check")
+                self.connection_errors += 1
+                # Force close the interface to clean up internal threads
+                try:
+                    self.interface.close()
+                except Exception:
+                    pass
+                self.interface = None
 
-            # Try to reconnect immediately
-            logging.warning("[ConnectionManager] Attempting immediate reconnection after interface failure...")
-            if self.reconnect():
-                return self.interface
-            else:
-                logging.error("[ConnectionManager] Immediate reconnection failed")
-                return None
-        except Exception as e:
-            logging.warning(f"[ConnectionManager] Interface check failed with unexpected error: {e}")
-            self.connection_errors += 1
-            return None
+                # Try to reconnect immediately
+                logging.warning("[ConnectionManager] Attempting immediate reconnection after socket failure...")
+                if self.reconnect():
+                    return self.interface
+                else:
+                    logging.error("[ConnectionManager] Immediate reconnection failed")
+                    return None
 
         return self.interface
 
@@ -267,7 +263,6 @@ class ConnectionManager:
         if isinstance(error, BrokenPipeError | ConnectionResetError | OSError):
             logging.warning(f"[ConnectionManager] Connection error reported: {error}")
             self.connection_errors += 1
-            self._meshtastic_connected = False
             # Force close the interface to clean up internal threads
             if self.interface:
                 try:
@@ -282,14 +277,6 @@ class ConnectionManager:
         """Close the connection and stop monitoring"""
         logging.info("[ConnectionManager] ConnectionManager closing...")
         self.stop_event.set()
-
-        # Unsubscribe from pubsub events
-        try:
-            pub.unsubscribe(self._on_connection_established, "meshtastic.connection.established")
-            pub.unsubscribe(self._on_connection_lost, "meshtastic.connection.lost")
-            logging.info("[ConnectionManager] Unsubscribed from pubsub events")
-        except Exception as e:
-            logging.warning(f"[ConnectionManager] Error unsubscribing from pubsub: {e}")
 
         # Wait for health monitor thread to finish
         if hasattr(self, "health_thread") and self.health_thread.is_alive():

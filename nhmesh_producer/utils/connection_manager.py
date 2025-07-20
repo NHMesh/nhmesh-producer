@@ -26,7 +26,6 @@ class ConnectionManager:
         self.reconnect_delay = reconnect_delay
         self.health_check_interval = health_check_interval
         self.interface: Any = None
-        self.connected = False
         self.last_heartbeat = time.time()
         self.connection_errors = 0
         self.max_connection_errors = 10
@@ -62,19 +61,17 @@ class ConnectionManager:
                     )
                 self.connected_node_id = self.node_info["user"]["id"]
 
-                self.connected = True
                 self.connection_errors = 0
                 self.last_heartbeat = time.time()
 
                 logging.info(f"[ConnectionManager] Successfully connected to node {self.connected_node_id}")
-                logging.info(f"[ConnectionManager] Connection state: connected={self.connected}, errors={self.connection_errors}")
+                logging.info(f"[ConnectionManager] Connection state: errors={self.connection_errors}")
                 return True
 
             except Exception as e:
                 logging.warning(f"[ConnectionManager] Failed to connect to Meshtastic node: {e}")
-                self.connected = False
                 self.connection_errors += 1
-                logging.info(f"[ConnectionManager] Connection failed - state: connected={self.connected}, errors={self.connection_errors}")
+                logging.info(f"[ConnectionManager] Connection failed - errors={self.connection_errors}")
                 # Clean up any partially created interface
                 if self.interface:
                     try:
@@ -131,30 +128,41 @@ class ConnectionManager:
                 if self.stop_event.is_set():
                     break
 
-                logging.info(f"[ConnectionManager] Health monitor running check - connected: {self.connected}, errors: {self.connection_errors}/{self.max_connection_errors}")
+                logging.info(f"[ConnectionManager] Health monitor running check - connected: {self.is_connected()}, errors: {self.connection_errors}/{self.max_connection_errors}")
 
                 if (
-                    not self.connected
+                    not self.is_connected()
                     or self.connection_errors >= self.max_connection_errors
                 ):
                     logging.warning(
-                        f"[ConnectionManager] Connection health check failed - connected: {self.connected}, errors: {self.connection_errors}, attempting reconnection"
+                        f"[ConnectionManager] Connection health check failed - connected: {self.is_connected()}, errors: {self.connection_errors}, attempting reconnection"
                     )
                     # Don't attempt reconnection if shutting down
                     if not self.stop_event.is_set():
                         self.reconnect()
 
                 # Check if interface is still responsive
-                if self.interface and self.connected and not self.stop_event.is_set():
+                if self.interface and self.is_connected() and not self.stop_event.is_set():
                     try:
                         logging.info("[ConnectionManager] Performing interface responsiveness check...")
-                        # Simple health check - try to get node info
-                        self.interface.getMyNodeInfo()
-                        self.last_heartbeat = time.time()
-                        logging.info("[ConnectionManager] Health check passed - interface responsive")
+
+                        # Check if the Meshtastic library thinks we're still connected
+                        if not self.interface.isConnected.is_set():
+                            logging.warning("[ConnectionManager] Meshtastic library reports disconnection")
+                            self.connection_errors += 1
+                            # Force close the interface to clean up internal threads
+                            try:
+                                self.interface.close()
+                            except Exception:
+                                pass
+                            self.interface = None
+                        else:
+                            # Simple health check - try to get node info
+                            self.interface.getMyNodeInfo()
+                            self.last_heartbeat = time.time()
+                            logging.info("[ConnectionManager] Health check passed - interface responsive")
                     except (BrokenPipeError, ConnectionResetError, OSError) as e:
                         logging.warning(f"[ConnectionManager] Connection lost during health check: {e}")
-                        self.connected = False
                         self.connection_errors += 1
                         # Force close the interface to clean up internal threads
                         try:
@@ -164,12 +172,11 @@ class ConnectionManager:
                         self.interface = None
                     except Exception as e:
                         logging.warning(f"[ConnectionManager] Health check failed: {e}")
-                        self.connected = False
                         self.connection_errors += 1
                 else:
                     if not self.interface:
                         logging.info("[ConnectionManager] Health check skipped - no interface")
-                    elif not self.connected:
+                    elif not self.is_connected():
                         logging.info("[ConnectionManager] Health check skipped - not connected")
                     else:
                         logging.info("[ConnectionManager] Health check skipped - shutdown requested")
@@ -180,10 +187,13 @@ class ConnectionManager:
         logging.info("[ConnectionManager] Health monitor thread exiting cleanly")
 
     def is_connected(self) -> bool:
-        """Check if currently connected"""
-        result = self.connected and self.interface is not None
-        logging.info(f"[ConnectionManager] is_connected() = {result} (connected={self.connected}, interface={'exists' if self.interface else 'None'})")
-        return result
+        """Check if currently connected using Meshtastic library's connection state"""
+        if not self.interface:
+            return False
+
+        connected = self.interface.isConnected.is_set()
+        logging.info(f"[ConnectionManager] is_connected() = {connected} (interface exists, meshtastic_connected={connected})")
+        return connected
 
     def get_interface(self) -> Any | None:
         """Get the current interface, reconnecting if necessary"""
@@ -212,7 +222,6 @@ class ConnectionManager:
                 return self.interface
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             logging.warning(f"[ConnectionManager] Interface became unresponsive during check: {e}")
-            self.connected = False
             self.connection_errors += 1
             # Force close the interface to clean up internal threads
             try:
@@ -230,7 +239,6 @@ class ConnectionManager:
                 return None
         except Exception as e:
             logging.warning(f"[ConnectionManager] Interface check failed with unexpected error: {e}")
-            self.connected = False
             self.connection_errors += 1
             return None
 
@@ -246,7 +254,6 @@ class ConnectionManager:
         """
         if isinstance(error, BrokenPipeError | ConnectionResetError | OSError):
             logging.warning(f"[ConnectionManager] Connection error reported: {error}")
-            self.connected = False
             self.connection_errors += 1
             # Force close the interface to clean up internal threads
             if self.interface:
@@ -278,4 +285,3 @@ class ConnectionManager:
                 logging.info("[ConnectionManager] Interface closed successfully")
             except Exception as e:
                 logging.error(f"[ConnectionManager] Error closing interface during shutdown: {e}")
-        self.connected = False

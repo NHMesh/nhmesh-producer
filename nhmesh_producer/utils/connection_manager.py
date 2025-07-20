@@ -40,7 +40,7 @@ class ConnectionManager:
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         self.health_thread.start()
 
-    def _is_socket_connected(self, sock: socket.socket) -> bool:
+    def _is_socket_connected(self, sock: socket.socket | None) -> bool:
         """
         Check if socket is still connected using multiple detection methods.
         This handles both graceful disconnections and physical network failures.
@@ -48,7 +48,13 @@ class ConnectionManager:
         Based on solution from: https://github.com/meshtastic/python/issues/765#issuecomment-2817305288
         Enhanced to detect physical disconnections.
         """
+        if sock is None:
+            logging.debug("[ConnectionManager] Socket is None")
+            return False
+
         try:
+            logging.debug(f"[ConnectionManager] Checking socket: {sock}, family: {sock.family}, type: {sock.type}")
+
             # Method 1: Check if socket has data available for reading (detects graceful close)
             r, _, _ = select.select([sock], [], [], 0)
             if r:
@@ -82,7 +88,31 @@ class ConnectionManager:
                     logging.debug(f"[ConnectionManager] Socket send error: {e}")
                     return False
 
-            # Method 4: Check if socket is writable (can detect some physical disconnections)
+            # Method 4: Try sending a single byte to force detection of broken connections
+            # This is more aggressive than sending 0 bytes
+            try:
+                # Save current socket timeout
+                original_timeout = sock.gettimeout()
+                sock.settimeout(0.5)  # Very short timeout
+
+                # Try to send and immediately receive to detect broken connections
+                sock.send(b'\x00')  # Send a null byte
+
+                # Try to receive it back or any data - this should timeout quickly on broken connections
+                try:
+                    sock.recv(1, socket.MSG_PEEK)  # Just peek, don't consume
+                except TimeoutError:
+                    # Timeout is expected - just means no immediate data available
+                    pass
+
+                # Restore original timeout
+                sock.settimeout(original_timeout)
+
+            except (OSError, TimeoutError) as e:
+                logging.debug(f"[ConnectionManager] Aggressive socket test failed: {e}")
+                return False
+
+            # Method 5: Check if socket is writable (can detect some physical disconnections)
             # Use a very short timeout to avoid blocking
             _, w, _ = select.select([], [sock], [], 0.1)
             if not w:
@@ -91,6 +121,7 @@ class ConnectionManager:
                 logging.debug("[ConnectionManager] Socket not immediately writable")
 
             # Socket appears to be connected
+            logging.debug("[ConnectionManager] Socket appears connected")
             return True
 
         except OSError as e:
@@ -192,10 +223,24 @@ class ConnectionManager:
                 socket_connected = False
                 meshtastic_connected = False
                 if self.interface:
+                    logging.debug(f"[ConnectionManager] Interface type: {type(self.interface)}")
+                    logging.debug(f"[ConnectionManager] Interface attributes: {[attr for attr in dir(self.interface) if not attr.startswith('_')]}")
+
                     if hasattr(self.interface, 'socket'):
-                        socket_connected = self._is_socket_connected(self.interface.socket)
+                        socket_obj = self.interface.socket
+                        logging.debug(f"[ConnectionManager] Socket object: {socket_obj}")
+                        if socket_obj is not None:
+                            socket_connected = self._is_socket_connected(socket_obj)
+                        else:
+                            logging.debug("[ConnectionManager] Socket is None")
+                    else:
+                        logging.debug("[ConnectionManager] Interface has no 'socket' attribute")
+
                     if hasattr(self.interface, 'isConnected'):
                         meshtastic_connected = self.interface.isConnected.is_set()
+                        logging.debug(f"[ConnectionManager] Meshtastic isConnected: {meshtastic_connected}")
+                    else:
+                        logging.debug("[ConnectionManager] Interface has no 'isConnected' attribute")
 
                 logging.info(f"[ConnectionManager] Health monitor check - socket_connected: {socket_connected}, meshtastic_connected: {meshtastic_connected}, errors: {self.connection_errors}/{self.max_connection_errors}")
 

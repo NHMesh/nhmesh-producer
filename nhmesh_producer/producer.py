@@ -81,9 +81,23 @@ class MeshtasticMQTTHandler:
 
         # Initialize connection manager
         self.connection_manager = ConnectionManager(node_ip)
-        self.lora_config = self.connection_manager.get_interface().localNode.localConfig.lora
-        self.modem_preset = "LongFast" if self.lora_config.modem_preset == 0 else "MediumFast" if self.lora_config.modem_preset == 4 else "Unknown"
-        self.channel_num = self.lora_config.channel_num
+        
+        # Get interface and check if it's available
+        interface = self.connection_manager.get_interface()
+        if interface is None:
+            raise Exception("Failed to get Meshtastic interface")
+        
+        # Get LoRa configuration with null checks
+        try:
+            self.lora_config = interface.localNode.localConfig.lora
+            self.modem_preset = "LongFast" if self.lora_config.modem_preset == 0 else "MediumFast" if self.lora_config.modem_preset == 4 else "Unknown"
+            self.channel_num = self.lora_config.channel_num
+        except AttributeError as e:
+            logging.warning(f"Failed to get LoRa configuration: {e}")
+            # Set default values if LoRa config is not available
+            self.lora_config = None
+            self.modem_preset = "Unknown"
+            self.channel_num = 0
 
         # MQTT client setup with callbacks
         self.mqtt_client = mqtt.Client()
@@ -106,11 +120,16 @@ class MeshtasticMQTTHandler:
             raise Exception("Failed to establish initial Meshtastic connection")
 
         # --- Node Cache and Traceroute Daemon Feature ---
-        self.node_cache = NodeCache(self.connection_manager.get_interface())
+        # Get interface for NodeCache and TracerouteManager initialization
+        interface = self.connection_manager.get_interface()
+        if interface is None:
+            raise Exception("Failed to get Meshtastic interface for NodeCache and TracerouteManager")
+        
+        self.node_cache = NodeCache(interface)
 
         # Pass configuration parameters directly to TracerouteManager
         self.traceroute_manager = TracerouteManager(
-            self.connection_manager.get_interface(),
+            interface,
             self.node_cache,
             traceroute_cooldown,
             traceroute_interval,

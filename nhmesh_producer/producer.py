@@ -81,7 +81,7 @@ class MeshtasticMQTTHandler:
 
         # Initialize connection manager
         self.connection_manager = ConnectionManager(node_ip)
-        
+
         # Get interface and check if it's available
         interface = self.connection_manager.get_interface()
         if interface is None:

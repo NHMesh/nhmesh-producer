@@ -90,7 +90,13 @@ class MeshtasticMQTTHandler:
         # Get LoRa configuration with null checks
         try:
             self.lora_config = interface.localNode.localConfig.lora
-            self.modem_preset = "LongFast" if self.lora_config.modem_preset == 0 else "MediumFast" if self.lora_config.modem_preset == 4 else "Unknown"
+            self.modem_preset = (
+                "LongFast"
+                if self.lora_config.modem_preset == 0
+                else "MediumFast"
+                if self.lora_config.modem_preset == 4
+                else "Unknown"
+            )
             self.channel_num = self.lora_config.channel_num
         except AttributeError as e:
             logging.warning(f"Failed to get LoRa configuration: {e}")
@@ -123,7 +129,9 @@ class MeshtasticMQTTHandler:
         # Get interface for NodeCache and TracerouteManager initialization
         interface = self.connection_manager.get_interface()
         if interface is None:
-            raise Exception("Failed to get Meshtastic interface for NodeCache and TracerouteManager")
+            raise Exception(
+                "Failed to get Meshtastic interface for NodeCache and TracerouteManager"
+            )
 
         self.node_cache = NodeCache(interface)
 

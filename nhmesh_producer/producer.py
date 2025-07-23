@@ -81,6 +81,9 @@ class MeshtasticMQTTHandler:
 
         # Initialize connection manager
         self.connection_manager = ConnectionManager(node_ip)
+        self.lora_config = self.connection_manager.get_interface().localNode.localConfig.lora
+        self.modem_preset = "LongFast" if self.lora_config.modem_preset == 0 else "MediumFast" if self.lora_config.modem_preset == 4 else "Unknown"
+        self.channel_num = self.lora_config.channel_num
 
         # MQTT client setup with callbacks
         self.mqtt_client = mqtt.Client()
@@ -321,6 +324,8 @@ class MeshtasticMQTTHandler:
                 out_packet["gatewayId"] = "unknown"
 
         out_packet["source"] = "rf"
+        out_packet["modem_preset"] = self.modem_preset
+        out_packet["channel_num"] = self.channel_num
 
         self.publish_dict_to_mqtt(out_packet)
 

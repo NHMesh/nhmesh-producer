@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.2...v0.2.0) (2025-07-23)
+
+
+### Features
+
+* add modem preset and lora channel to mqtt messages ([#18](https://github.com/NHMesh/nhmesh-producer/issues/18)) ([e2b1717](https://github.com/NHMesh/nhmesh-producer/commit/e2b1717846adb627690ed1f6f6fd3d331d1df2d8))
+
 ## [0.1.2](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.1...v0.1.2) (2025-07-18)
 
 

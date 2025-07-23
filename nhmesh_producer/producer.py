@@ -86,7 +86,7 @@ class MeshtasticMQTTHandler:
         interface = self.connection_manager.get_interface()
         if interface is None:
             raise Exception("Failed to get Meshtastic interface")
-        
+
         # Get LoRa configuration with null checks
         try:
             self.lora_config = interface.localNode.localConfig.lora
@@ -124,7 +124,7 @@ class MeshtasticMQTTHandler:
         interface = self.connection_manager.get_interface()
         if interface is None:
             raise Exception("Failed to get Meshtastic interface for NodeCache and TracerouteManager")
-        
+
         self.node_cache = NodeCache(interface)
 
         # Pass configuration parameters directly to TracerouteManager

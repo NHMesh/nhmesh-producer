@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.0...v0.2.1) (2025-07-28)
+
+
+### Bug Fixes
+
+* **build:** fixes an issue with trying to cross compile macos arm ([1da7515](https://github.com/NHMesh/nhmesh-producer/commit/1da751502e84b1510a6b77169cbc355036536cb3))
+
 ## [0.2.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.2...v0.2.0) (2025-07-23)
 
 

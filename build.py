@@ -271,7 +271,7 @@ COPY . .
 COPY {SPEC_FILE} .
 
 # Build the binary
-RUN python -m PyInstaller --clean {SPEC_FILE}
+RUN python -m PyInstaller --clean -y {SPEC_FILE}
 
 # Create output directory structure
 RUN mkdir -p /output/{config_name}
@@ -320,6 +320,7 @@ def build_cross_platform():
         image_name = f"{PROJECT_NAME}-build-{config_name}"
         build_cmd = [
             "docker",
+            "buildx",
             "build",
             "--platform",
             config["platform"],
@@ -327,6 +328,7 @@ def build_cross_platform():
             dockerfile_path,
             "-t",
             image_name,
+            "--load",
             ".",
         ]
 
@@ -494,17 +496,20 @@ def print_usage():
 NHMesh Producer Build Script
 
 Usage:
-  python3 build.py [option]
+  python3 build.py [option] [--platform platform_name]
 
 Options:
   simple      - Build for current platform only (recommended for beginners)
   docker      - Build for all platforms using Docker (requires Docker)
+  docker --platform <name> - Build for specific platform only
   test        - Test existing binaries
   help        - Show this help message
 
 Examples:
   python3 build.py simple      # Build for your current platform
   python3 build.py docker      # Build for Linux, ARM64, and macOS
+  python3 build.py docker --platform linux-x86_64  # Build for Linux x86_64 only
+  python3 build.py docker --platform linux-aarch64 # Build for Linux ARM64 only
   python3 build.py test        # Test existing binaries
 
 Supported platforms:
@@ -514,9 +519,87 @@ Supported platforms:
 """)
 
 
+def build_specific_platform(platform_name):
+    """Build binary for a specific platform"""
+    if platform_name not in BUILD_CONFIGS:
+        print(f"Unknown platform: {platform_name}")
+        print(f"Available platforms: {', '.join(BUILD_CONFIGS.keys())}")
+        return False
+    
+    print(f"Building for specific platform: {platform_name}")
+    
+    # Create spec file
+    if not create_spec_file():
+        print("Failed to create spec file")
+        return False
+    
+    config = BUILD_CONFIGS[platform_name]
+    
+    # Create Dockerfile
+    dockerfile_path = create_dockerfile(platform_name, config)
+    
+    # Create output directory
+    output_dir = f"dist/{platform_name}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Build Docker image using buildx for cross-platform support
+    image_name = f"{PROJECT_NAME}-build-{platform_name}"
+    build_cmd = [
+        "docker",
+        "buildx",
+        "build",
+        "--platform",
+        config["platform"],
+        "-f",
+        dockerfile_path,
+        "-t",
+        image_name,
+        "--load",
+        ".",
+    ]
+    
+    if not run_command(build_cmd):
+        print(f"Failed to build Docker image for {platform_name}")
+        return False
+    
+    # Create container and copy binary
+    container_name = f"{PROJECT_NAME}-container-{platform_name}"
+    
+    # Run container
+    run_cmd = [
+        "docker",
+        "run",
+        "--name",
+        container_name,
+        "--platform",
+        config["platform"],
+        image_name,
+        "true",
+    ]
+    
+    if not run_command(run_cmd):
+        print(f"Failed to create container for {platform_name}")
+        return False
+    
+    # Copy binary from container
+    cp_cmd = ["docker", "cp", f"{container_name}:/output/{platform_name}", output_dir]
+    
+    if not run_command(cp_cmd):
+        print(f"Failed to copy binary from container for {platform_name}")
+        return False
+    
+    # Clean up
+    run_command(["docker", "rm", container_name])
+    run_command(["docker", "rmi", image_name])
+    os.remove(dockerfile_path)
+    
+    print(f"Successfully built {platform_name}")
+    return True
+
+
 def main():
     """Main build function"""
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         print_usage()
         sys.exit(1)
 
@@ -549,7 +632,16 @@ def main():
             print("Docker is not available. Please install Docker to use this option.")
             print("Use 'python3 build.py simple' for current platform only.")
             sys.exit(1)
-        success = build_cross_platform()
+        
+        # Check if a specific platform was requested
+        if len(sys.argv) > 2 and sys.argv[2] == "--platform":
+            if len(sys.argv) < 4:
+                print("Error: --platform requires a platform name")
+                sys.exit(1)
+            platform_name = sys.argv[3]
+            success = build_specific_platform(platform_name)
+        else:
+            success = build_cross_platform()
     elif option == "test":
         success = test_binaries()
     else:

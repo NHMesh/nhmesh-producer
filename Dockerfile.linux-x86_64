@@ -24,7 +24,7 @@ COPY . .
 COPY nhmesh-producer.spec .
 
 # Build the binary
-RUN python -m PyInstaller --clean nhmesh-producer.spec
+RUN python -m PyInstaller --clean -y nhmesh-producer.spec
 
 # Create output directory structure
 RUN mkdir -p /output/linux-x86_64

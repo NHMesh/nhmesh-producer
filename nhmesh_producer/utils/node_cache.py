@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from utils.number_utils import safe_float_list, safe_process_position
+from nhmesh_producer.utils.number_utils import safe_float_list, safe_process_position
 
 
 class NodeCache:

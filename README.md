@@ -8,8 +8,12 @@
 [![Docker](https://img.shields.io/badge/docker-enabled-blue.svg)](https://www.docker.com/)
 [![GHCR](https://img.shields.io/github/v/release/nhmesh/nhmesh-producer?logo=docker&logoColor=white&label=ghcr.io)](https://github.com/nhmesh/nhmesh-producer/pkgs/container/producer)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Build and Release](https://github.com/nhmesh/nhmesh-producer/workflows/Build%20and%20Release/badge.svg)](https://github.com/nhmesh/nhmesh-producer/actions/workflows/build-and-release.yml)
+[![Test Build](https://github.com/nhmesh/nhmesh-producer/workflows/Test%20Build/badge.svg)](https://github.com/nhmesh/nhmesh-producer/actions/workflows/test-build.yml)
 
 A resilient Meshtastic MQTT producer with automatic reconnection and connection health monitoring. This standalone producer handles the connection to Meshtastic nodes and publishes received packets to an MQTT broker with enhanced error handling and recovery mechanisms.
+
+For information about contributing to this project, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Running with Docker
 
@@ -25,20 +29,20 @@ docker run -d \
 
 #### Environment Variables
 
-| Variable                       | Default                         | Description                                                    |
-| ------------------------------ | ------------------------------- | -------------------------------------------------------------- |
-| `LOG_LEVEL`                    | `INFO`                          | Logging level (DEBUG, INFO, WARNING, ERROR)                   |
-| `MQTT_ENDPOINT`                | `mqtt.nhmesh.live`              | MQTT broker address                                            |
-| `MQTT_PORT`                    | `1883`                          | MQTT broker port                                               |
-| `MQTT_USERNAME`                | -                               | MQTT username for authentication                               |
-| `MQTT_PASSWORD`                | -                               | MQTT password for authentication                               |
-| `NODE_IP`                      | -                               | IP address of the Meshtastic node to connect to               |
-| `MQTT_TOPIC`                   | `msh/US/NH/`                    | Root MQTT topic for publishing messages                       |
-| `TRACEROUTE_COOLDOWN`          | `180`                           | Minimum time between any traceroute operations in seconds (3 minutes) |
-| `TRACEROUTE_INTERVAL`          | `43200`                         | Interval between periodic traceroutes in seconds (12 hours)   |
-| `TRACEROUTE_MAX_RETRIES`       | `3`                             | Maximum number of retry attempts for failed traceroutes       |
-| `TRACEROUTE_MAX_BACKOFF`       | `86400`                         | Maximum backoff time in seconds for failed nodes (24 hours)   |
-| `TRACEROUTE_PERSISTENCE_FILE`  | `/tmp/traceroute_state.json`    | Path to file for persisting retry/backoff state across restarts |
+| Variable                      | Default                      | Description                                                           |
+| ----------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| `LOG_LEVEL`                   | `INFO`                       | Logging level (DEBUG, INFO, WARNING, ERROR)                           |
+| `MQTT_ENDPOINT`               | `mqtt.nhmesh.live`           | MQTT broker address                                                   |
+| `MQTT_PORT`                   | `1883`                       | MQTT broker port                                                      |
+| `MQTT_USERNAME`               | -                            | MQTT username for authentication                                      |
+| `MQTT_PASSWORD`               | -                            | MQTT password for authentication                                      |
+| `NODE_IP`                     | -                            | IP address of the Meshtastic node to connect to                       |
+| `MQTT_TOPIC`                  | `msh/US/NH/`                 | Root MQTT topic for publishing messages                               |
+| `TRACEROUTE_COOLDOWN`         | `180`                        | Minimum time between any traceroute operations in seconds (3 minutes) |
+| `TRACEROUTE_INTERVAL`         | `43200`                      | Interval between periodic traceroutes in seconds (12 hours)           |
+| `TRACEROUTE_MAX_RETRIES`      | `3`                          | Maximum number of retry attempts for failed traceroutes               |
+| `TRACEROUTE_MAX_BACKOFF`      | `86400`                      | Maximum backoff time in seconds for failed nodes (24 hours)           |
+| `TRACEROUTE_PERSISTENCE_FILE` | `/tmp/traceroute_state.json` | Path to file for persisting retry/backoff state across restarts       |
 
 ### Command Line Options
 
@@ -103,25 +107,72 @@ poetry install
 pip install -r requirements.txt
 ```
 
-## Usage
+## Building Binaries
 
-### Building Docker Image Locally
+### Local Build
 
-If you want to build the Docker image yourself instead of using the pre-built image:
+You can build binaries locally using the included build script:
 
 ```bash
-# Build the image
-docker build -t nhmesh-producer .
+# Build for current platform only
+python3 build.py simple
 
-# Run the container
-docker run -d \
-    -e NODE_IP=192.168.1.100 \
-    -e MQTT_USERNAME=your_username \
-    -e MQTT_PASSWORD=your_password \
-    -p 5001:5001 \
-    nhmesh-producer
+# Build for all platforms (requires Docker)
+python3 build.py docker
+
+# Test existing binaries
+python3 build.py test
 ```
 
+### GitHub Actions
+
+This project includes automated GitHub Actions workflows for building and releasing binaries. When you push a tag (e.g., `v1.0.0`), the workflow will automatically build binaries for all supported platforms and create a GitHub release.
+
+**Supported Platforms:**
+
+- Linux x86_64 (Intel/AMD servers and desktops)
+- Linux ARM64 (Raspberry Pi, ARM servers)
+- macOS x86_64 (Intel Macs)
+- macOS ARM64 (Apple Silicon M1/M2)
+- macOS Native (built on macOS runners)
+
+For detailed information about the build process, release management, and contributing to the project, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Downloading Pre-built Binaries
+
+Pre-built binaries are available for all supported platforms on the [GitHub Releases](https://github.com/nhmesh/nhmesh-producer/releases) page. Simply download the appropriate binary for your platform and run it:
+
+```bash
+# Example for Linux x86_64
+wget https://github.com/nhmesh/nhmesh-producer/releases/download/v1.0.0/nhmesh-producer-linux-x86_64.tar.gz
+tar -xzf nhmesh-producer-linux-x86_64.tar.gz
+./nhmesh-producer/nhmesh-producer --help
+```
+
+## Installation
+
+### From Source
+
+If you want to install from source or contribute to the project:
+
+```bash
+# Clone the repository
+git clone https://github.com/nhmesh/nhmesh-producer.git
+cd nhmesh-producer
+
+# Install dependencies
+poetry install
+
+# Run the producer
+poetry run python -m nhmesh_producer.producer \
+    --username your_username \
+    --password your_password \
+    --node-ip 192.168.1.100
+```
+
+For detailed development setup instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Usage
 
 ## Resilience Features
 

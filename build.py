@@ -209,7 +209,7 @@ def build_simple():
 
     # Install dev dependencies (including PyInstaller)
     print("Installing dev dependencies...")
-    install_cmd = ["poetry", "install", "--with", "dev"]
+    install_cmd = ["poetry", "install", "--extras", "dev"]
     if not run_command(install_cmd):
         print("Failed to install dev dependencies")
         return False

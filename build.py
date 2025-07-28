@@ -220,7 +220,16 @@ def build_simple():
         return False
 
     # Build using Poetry
-    build_cmd = ["poetry", "run", "python", "-m", "PyInstaller", "--clean", "-y", SPEC_FILE]
+    build_cmd = [
+        "poetry",
+        "run",
+        "python",
+        "-m",
+        "PyInstaller",
+        "--clean",
+        "-y",
+        SPEC_FILE,
+    ]
 
     if not run_command(build_cmd):
         print("Build failed")
@@ -230,11 +239,11 @@ def build_simple():
     current_platform = platform.system().lower()
     current_arch = platform.machine()
     output_dir = f"dist/{current_platform}-{current_arch}"
-    
+
     # Remove existing directory if it exists
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
-    
+
     os.makedirs(output_dir, exist_ok=True)
 
     if os.path.exists(f"dist/{PROJECT_NAME}"):

@@ -392,6 +392,9 @@ def build_cross_platform():
             ]
             if run_command(build_cmd):
                 output_dir = "dist/macos-native"
+                # Remove existing directory if it exists
+                if os.path.exists(output_dir):
+                    shutil.rmtree(output_dir)
                 os.makedirs(output_dir, exist_ok=True)
                 if os.path.exists(f"dist/{PROJECT_NAME}"):
                     shutil.move(f"dist/{PROJECT_NAME}", output_dir)

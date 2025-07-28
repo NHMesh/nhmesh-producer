@@ -101,7 +101,7 @@ git clone <repository-url>
 cd nhmesh-producer
 
 # Install dependencies
-poetry install --with dev
+poetry install --group dev
 
 # Or with pip
 pip install -r requirements.txt
@@ -161,7 +161,7 @@ git clone https://github.com/nhmesh/nhmesh-producer.git
 cd nhmesh-producer
 
 # Install dependencies
-poetry install --with dev
+poetry install --group dev
 
 # Run the producer
 poetry run python -m nhmesh_producer.producer \

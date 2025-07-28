@@ -27,16 +27,6 @@ BUILD_CONFIGS = {
         "platform": "linux/arm64",
         "target_arch": "aarch64",
     },
-    "macos-x86_64": {
-        "image": "python:3.13-slim",
-        "platform": "linux/amd64",
-        "target_arch": "x86_64",
-    },
-    "macos-arm64": {
-        "image": "python:3.13-slim",
-        "platform": "linux/arm64",
-        "target_arch": "arm64",
-    },
 }
 
 
@@ -303,7 +293,9 @@ RUN chmod +x /output/{config_name}/{PROJECT_NAME}/{PROJECT_NAME}
 def build_cross_platform():
     """Build binaries for all platforms using Docker"""
     print("Building for all platforms using Docker...")
-
+    print("Note: macOS builds are handled separately via native builds")
+    print("Cross-compilation only supports Linux targets (x86_64 and ARM64)")
+    
     # Create spec file
     if not create_spec_file():
         print("Failed to create spec file")
@@ -382,23 +374,31 @@ def build_cross_platform():
         print("Building native macOS binary")
         print(f"{'=' * 60}")
 
-        # Build using Poetry
-        build_cmd = [
-            "poetry",
-            "run",
-            "python",
-            "-m",
-            "PyInstaller",
-            "--clean",
-            SPEC_FILE,
-        ]
-        if run_command(build_cmd):
-            output_dir = "dist/macos-native"
-            os.makedirs(output_dir, exist_ok=True)
-            if os.path.exists(f"dist/{PROJECT_NAME}"):
-                shutil.move(f"dist/{PROJECT_NAME}", output_dir)
-            print("Successfully built native macOS binary")
-            success_count += 1
+        # Install dev dependencies first
+        install_cmd = ["poetry", "install", "--extras", "dev"]
+        if not run_command(install_cmd):
+            print("Failed to install dev dependencies for macOS build")
+        else:
+            # Build using Poetry
+            build_cmd = [
+                "poetry",
+                "run",
+                "python",
+                "-m",
+                "PyInstaller",
+                "--clean",
+                "-y",
+                SPEC_FILE,
+            ]
+            if run_command(build_cmd):
+                output_dir = "dist/macos-native"
+                os.makedirs(output_dir, exist_ok=True)
+                if os.path.exists(f"dist/{PROJECT_NAME}"):
+                    shutil.move(f"dist/{PROJECT_NAME}", output_dir)
+                print("Successfully built native macOS binary")
+                success_count += 1
+            else:
+                print("Failed to build native macOS binary")
         total_count += 1
 
     # Clean up spec file
@@ -507,8 +507,7 @@ Examples:
 Supported platforms:
   - Linux x86_64 (Intel/AMD servers and desktops)
   - Linux ARM64 (Raspberry Pi, ARM servers)
-  - macOS x86_64 (Intel Macs)
-  - macOS ARM64 (Apple Silicon M1/M2)
+  - macOS (native builds only - Intel and Apple Silicon)
 """)
 
 

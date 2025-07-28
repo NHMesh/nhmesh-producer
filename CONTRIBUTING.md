@@ -34,7 +34,7 @@ Thank you for your interest in contributing to NHMesh Producer! This document pr
 2. **Install dependencies:**
 
    ```bash
-   poetry install --group dev
+   poetry install --extras dev
    ```
 
 3. **Set up pre-commit hooks (optional):**

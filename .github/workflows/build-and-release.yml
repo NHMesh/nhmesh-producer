@@ -1,0 +1,276 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-binaries:
+    name: Build Cross-Platform Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux-x86_64, linux-aarch64, macos-x86_64, macos-arm64]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+          
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          
+      - name: Load cached Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          
+      - name: Install dependencies
+        run: poetry install --no-interaction --extras dev
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Build binary for ${{ matrix.platform }}
+        run: |
+          # Create spec file
+          python3 build.py help > /dev/null 2>&1 || true
+          
+          # Build using Docker cross-compilation
+          python3 build.py docker
+          
+      - name: Upload binary artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-binary
+          path: dist/${{ matrix.platform }}/${{ matrix.platform }}/nhmesh-producer/
+          retention-days: 30
+
+  build-native:
+    name: Build Native Binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: macos-latest
+            platform: macos-native
+            
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+          
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: latest
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          
+      - name: Load cached Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          
+      - name: Install dependencies
+        run: poetry install --no-interaction --extras dev
+        
+      - name: Build native binary
+        run: python3 build.py simple
+        
+      - name: Upload native binary artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-native
+          path: dist/${{ matrix.platform }}/nhmesh-producer/
+          retention-days: 30
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-native]
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## NHMesh Producer ${{ steps.version.outputs.version }}
+            
+            ### Binaries
+            
+            This release includes pre-built binaries for the following platforms:
+            
+            **Linux:**
+            - `nhmesh-producer-linux-x86_64.tar.gz` - Intel/AMD 64-bit
+            - `nhmesh-producer-linux-aarch64.tar.gz` - ARM 64-bit (Raspberry Pi, ARM servers)
+            
+            **macOS:**
+            - `nhmesh-producer-macos-x86_64.tar.gz` - Intel Macs
+            - `nhmesh-producer-macos-arm64.tar.gz` - Apple Silicon (M1/M2)
+            - `nhmesh-producer-macos-native.tar.gz` - Native macOS build
+            
+            ### Installation
+            
+            Download the appropriate binary for your platform and extract it:
+            
+            ```bash
+            # Example for Linux x86_64
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/nhmesh-producer-linux-x86_64.tar.gz
+            tar -xzf nhmesh-producer-linux-x86_64.tar.gz
+            ./nhmesh-producer/nhmesh-producer --help
+            ```
+            
+            ### Usage
+            
+            ```bash
+            ./nhmesh-producer --username your_username --password your_password --node-ip your_node_ip
+            ```
+            
+            For more options, run:
+            ```bash
+            ./nhmesh-producer --help
+            ```
+          files: |
+            artifacts/*-binary/nhmesh-producer
+            artifacts/*-native/nhmesh-producer
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  package-release:
+    name: Package Release Assets
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-native]
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
+      - name: Create packaged releases
+        run: |
+          mkdir -p release-packages
+          
+          # Package Linux x86_64
+          if [ -d "artifacts/linux-x86_64-binary/nhmesh-producer" ]; then
+            tar -czf "release-packages/nhmesh-producer-linux-x86_64.tar.gz" -C artifacts/linux-x86_64-binary nhmesh-producer
+          fi
+          
+          # Package Linux aarch64
+          if [ -d "artifacts/linux-aarch64-binary/nhmesh-producer" ]; then
+            tar -czf "release-packages/nhmesh-producer-linux-aarch64.tar.gz" -C artifacts/linux-aarch64-binary nhmesh-producer
+          fi
+          
+          # Package macOS x86_64
+          if [ -d "artifacts/macos-x86_64-binary/nhmesh-producer" ]; then
+            tar -czf "release-packages/nhmesh-producer-macos-x86_64.tar.gz" -C artifacts/macos-x86_64-binary nhmesh-producer
+          fi
+          
+          # Package macOS arm64
+          if [ -d "artifacts/macos-arm64-binary/nhmesh-producer" ]; then
+            tar -czf "release-packages/nhmesh-producer-macos-arm64.tar.gz" -C artifacts/macos-arm64-binary nhmesh-producer
+          fi
+          
+          # Package macOS native
+          if [ -d "artifacts/macos-native-native/nhmesh-producer" ]; then
+            tar -czf "release-packages/nhmesh-producer-macos-native.tar.gz" -C artifacts/macos-native-native nhmesh-producer
+          fi
+          
+          ls -la release-packages/
+          
+      - name: Upload release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: release-packages/
+          retention-days: 90
+
+  test-binaries:
+    name: Test Binaries
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-native]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Test Linux binaries
+        if: runner.os == 'Linux'
+        run: |
+          # Test Linux x86_64 binary
+          if [ -f "artifacts/linux-x86_64-binary/nhmesh-producer/nhmesh-producer" ]; then
+            echo "Testing Linux x86_64 binary..."
+            artifacts/linux-x86_64-binary/nhmesh-producer/nhmesh-producer --help
+          fi
+          
+          # Test Linux aarch64 binary
+          if [ -f "artifacts/linux-aarch64-binary/nhmesh-producer/nhmesh-producer" ]; then
+            echo "Testing Linux aarch64 binary..."
+            artifacts/linux-aarch64-binary/nhmesh-producer/nhmesh-producer --help
+          fi
+          
+      - name: Test macOS binaries
+        if: runner.os == 'macOS'
+        run: |
+          # Test macOS native binary
+          if [ -f "artifacts/macos-native-native/nhmesh-producer/nhmesh-producer" ]; then
+            echo "Testing macOS native binary..."
+            artifacts/macos-native-native/nhmesh-producer/nhmesh-producer --help
+          fi 

@@ -47,5 +47,5 @@ COPY ./nhmesh_producer /app/nhmesh_producer
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Command to run the application
-CMD ["python", "/app/nhmesh_producer/producer.py"]
+# Command to run the application as a module
+CMD ["python", "-m", "nhmesh_producer.producer"]

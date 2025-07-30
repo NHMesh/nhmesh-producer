@@ -1,5 +1,4 @@
 import meshtastic.tcp_interface
-import socket
 
 try:
     interface = meshtastic.tcp_interface.TCPInterface(hostname="10.250.1.103")
@@ -7,8 +6,8 @@ try:
     # For example, requesting node info might be a good "ping"
     interface.getMyNodeInfo()
     print("TCP connection appears to be alive and responsive.")
-except (socket.error, ConnectionRefusedError, TimeoutError) as e:
+except (OSError, ConnectionRefusedError, TimeoutError) as e:
     print(f"TCP connection is not alive or responsive: {e}")
 finally:
-    if 'interface' in locals() and interface.socket:
+    if "interface" in locals() and interface.socket:
         interface.close()

@@ -149,7 +149,7 @@ class MeshtasticMQTTHandler:
 
         # Subscribe to packet events AFTER traceroute_manager is initialized
         pub.subscribe(self.onReceive, "meshtastic.receive")  # type: ignore
-        
+
         # Subscribe to disconnect events for immediate reconnection
         pub.subscribe(self.onDisconnect, "meshtastic.disconnect")  # type: ignore
         pub.subscribe(self.onDisconnect, "meshtastic.connection.lost")  # type: ignore
@@ -159,7 +159,7 @@ class MeshtasticMQTTHandler:
         pub.subscribe(self.onDisconnect, "meshtastic.interface.error")  # type: ignore
         pub.subscribe(self.onDisconnect, "meshtastic.reader.error")  # type: ignore
         pub.subscribe(self.onDisconnect, "meshtastic.stream.error")  # type: ignore
-        
+
         # Subscribe to connection success events
         pub.subscribe(self.onConnect, "meshtastic.connection.established")  # type: ignore
         pub.subscribe(self.onConnect, "meshtastic.connected")  # type: ignore
@@ -379,16 +379,25 @@ class MeshtasticMQTTHandler:
             error: Optional error message describing the disconnection.
         """
         logging.warning(f"Meshtastic disconnect event received: {error}")
-        
+
         # Check for specific error types that indicate connection issues
-        if error and any(keyword in str(error).lower() for keyword in [
-            'connection refused', 'typeerror', 'nonetype', 'not iterable',
-            'stream', 'reader', 'interface', 'socket'
-        ]):
+        if error and any(
+            keyword in str(error).lower()
+            for keyword in [
+                "connection refused",
+                "typeerror",
+                "nonetype",
+                "not iterable",
+                "stream",
+                "reader",
+                "interface",
+                "socket",
+            ]
+        ):
             logging.error(f"Critical Meshtastic error detected: {error}")
-        
+
         # Trigger immediate reconnection through the connection manager
-        if hasattr(self, 'connection_manager'):
+        if hasattr(self, "connection_manager"):
             self.connection_manager.handle_external_error(f"Disconnect event: {error}")
 
     def onConnect(self, interface: Any) -> None:

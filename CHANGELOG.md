@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.0...v0.2.1) (2025-07-30)
+
+
+### Bug Fixes
+
+* **build:** cross compile with buildx ([962a1a3](https://github.com/NHMesh/nhmesh-producer/commit/962a1a3394a14f2c57fd3c1af2eb9308458b5322))
+* **build:** fixes an issue with trying to cross compile macos arm ([1da7515](https://github.com/NHMesh/nhmesh-producer/commit/1da751502e84b1510a6b77169cbc355036536cb3))
+* **healthcheck:** more robust disconnect handler and automatic reconnect - fix: [#2](https://github.com/NHMesh/nhmesh-producer/issues/2) ([#25](https://github.com/NHMesh/nhmesh-producer/issues/25)) ([09559c1](https://github.com/NHMesh/nhmesh-producer/commit/09559c1aaf2f6e0be5f0fe088dd467aac0e5cccd))
+
 ## [0.2.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.1.2...v0.2.0) (2025-07-23)
 
 

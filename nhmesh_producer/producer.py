@@ -150,6 +150,20 @@ class MeshtasticMQTTHandler:
         # Subscribe to packet events AFTER traceroute_manager is initialized
         pub.subscribe(self.onReceive, "meshtastic.receive")  # type: ignore
 
+        # Subscribe to disconnect events for immediate reconnection
+        pub.subscribe(self.onDisconnect, "meshtastic.disconnect")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.connection.lost")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.connection.failed")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.error")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.connection.error")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.interface.error")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.reader.error")  # type: ignore
+        pub.subscribe(self.onDisconnect, "meshtastic.stream.error")  # type: ignore
+
+        # Subscribe to connection success events
+        pub.subscribe(self.onConnect, "meshtastic.connection.established")  # type: ignore
+        pub.subscribe(self.onConnect, "meshtastic.connected")  # type: ignore
+
         # Register cleanup handlers
         atexit.register(self.cleanup)
 
@@ -356,6 +370,46 @@ class MeshtasticMQTTHandler:
         out_packet["channel_num"] = self.channel_num
 
         self.publish_dict_to_mqtt(out_packet)
+
+    def onDisconnect(self, interface: Any, error: str | None = None) -> None:
+        """
+        Handles Meshtastic disconnection events.
+        Args:
+            interface: The Meshtastic interface that disconnected.
+            error: Optional error message describing the disconnection.
+        """
+        logging.warning(f"Meshtastic disconnect event received: {error}")
+
+        # Check for specific error types that indicate connection issues
+        if error and any(
+            keyword in str(error).lower()
+            for keyword in [
+                "connection refused",
+                "typeerror",
+                "nonetype",
+                "not iterable",
+                "stream",
+                "reader",
+                "interface",
+                "socket",
+            ]
+        ):
+            logging.error(f"Critical Meshtastic error detected: {error}")
+
+        # Trigger immediate reconnection through the connection manager
+        if hasattr(self, "connection_manager"):
+            error_msg = f"Disconnect event: {error}" if error else "Disconnect event"
+            self.connection_manager.handle_external_error(error_msg)
+
+    def onConnect(self, interface: Any) -> None:
+        """
+        Handles Meshtastic connection success events.
+        Args:
+            interface: The Meshtastic interface that connected.
+        """
+        logging.info("Meshtastic connection established.")
+        # Update interface references after successful connection
+        self._update_interface_references()
 
     def publish_dict_to_mqtt(self, payload: dict[str, Any]) -> None:
         """

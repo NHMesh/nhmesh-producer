@@ -295,7 +295,7 @@ def build_cross_platform():
     print("Building for all platforms using Docker...")
     print("Note: macOS builds are handled separately via native builds")
     print("Cross-compilation only supports Linux targets (x86_64 and ARM64)")
-    
+
     # Create spec file
     if not create_spec_file():
         print("Failed to create spec file")
@@ -525,23 +525,23 @@ def build_specific_platform(platform_name):
         print(f"Unknown platform: {platform_name}")
         print(f"Available platforms: {', '.join(BUILD_CONFIGS.keys())}")
         return False
-    
+
     print(f"Building for specific platform: {platform_name}")
-    
+
     # Create spec file
     if not create_spec_file():
         print("Failed to create spec file")
         return False
-    
+
     config = BUILD_CONFIGS[platform_name]
-    
+
     # Create Dockerfile
     dockerfile_path = create_dockerfile(platform_name, config)
-    
+
     # Create output directory
     output_dir = f"dist/{platform_name}"
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Build Docker image using buildx for cross-platform support
     image_name = f"{PROJECT_NAME}-build-{platform_name}"
     build_cmd = [
@@ -557,14 +557,14 @@ def build_specific_platform(platform_name):
         "--load",
         ".",
     ]
-    
+
     if not run_command(build_cmd):
         print(f"Failed to build Docker image for {platform_name}")
         return False
-    
+
     # Create container and copy binary
     container_name = f"{PROJECT_NAME}-container-{platform_name}"
-    
+
     # Run container
     run_cmd = [
         "docker",
@@ -576,23 +576,23 @@ def build_specific_platform(platform_name):
         image_name,
         "true",
     ]
-    
+
     if not run_command(run_cmd):
         print(f"Failed to create container for {platform_name}")
         return False
-    
+
     # Copy binary from container
     cp_cmd = ["docker", "cp", f"{container_name}:/output/{platform_name}", output_dir]
-    
+
     if not run_command(cp_cmd):
         print(f"Failed to copy binary from container for {platform_name}")
         return False
-    
+
     # Clean up
     run_command(["docker", "rm", container_name])
     run_command(["docker", "rmi", image_name])
     os.remove(dockerfile_path)
-    
+
     print(f"Successfully built {platform_name}")
     return True
 
@@ -632,7 +632,7 @@ def main():
             print("Docker is not available. Please install Docker to use this option.")
             print("Use 'python3 build.py simple' for current platform only.")
             sys.exit(1)
-        
+
         # Check if a specific platform was requested
         if len(sys.argv) > 2 and sys.argv[2] == "--platform":
             if len(sys.argv) < 4:

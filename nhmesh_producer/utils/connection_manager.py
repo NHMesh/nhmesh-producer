@@ -185,7 +185,7 @@ class ConnectionManager:
                 if self.stop_event.is_set():
                     break
 
-                logging.info("=== HEALTH MONITOR CYCLE START ===")
+                logging.debug("=== HEALTH MONITOR CYCLE START ===")
 
                 # Check connection status with proper locking
                 should_reconnect = False
@@ -206,7 +206,7 @@ class ConnectionManager:
                     ):
                         should_reconnect = True
 
-                logging.info(
+                logging.debug(
                     f"Health check status: connected={current_connected}, errors={current_errors}/{current_max_errors}, interface_exists={interface_exists}, should_reconnect={should_reconnect}, time_since_last_success={time_since_last_success:.1f}s"
                 )
 
@@ -227,7 +227,7 @@ class ConnectionManager:
 
                 # Always check interface health if we have an interface, regardless of connected state
                 if self.interface and not self.stop_event.is_set():
-                    logging.info("Interface exists, performing health check...")
+                    logging.debug("Interface exists, performing health check...")
                     try:
                         # Use threading-based timeout for health check
                         import threading
@@ -242,9 +242,11 @@ class ConnectionManager:
                         def health_check():
                             nonlocal result
                             try:
-                                logging.info("Health check: calling getMyNodeInfo()...")
+                                logging.debug(
+                                    "Health check: calling getMyNodeInfo()..."
+                                )
                                 node_info = self.interface.getMyNodeInfo()
-                                logging.info(
+                                logging.debug(
                                     f"Health check: getMyNodeInfo() returned: {node_info}"
                                 )
                                 if node_info is None:
@@ -264,7 +266,7 @@ class ConnectionManager:
                                             raise Exception(
                                                 f"Socket error detected: {socket_info}"
                                             )
-                                        logging.info("Socket health check passed")
+                                        logging.debug("Socket health check passed")
                                     except Exception as socket_e:
                                         logging.warning(
                                             f"Socket health check failed: {socket_e}"
@@ -274,7 +276,7 @@ class ConnectionManager:
                                         ) from socket_e
 
                                 result.success = True  # noqa: B023
-                                logging.info("Health check: getMyNodeInfo() succeeded")
+                                logging.debug("Health check: getMyNodeInfo() succeeded")
                             except Exception as e:
                                 logging.error(
                                     f"Health check: getMyNodeInfo() failed with exception: {e}"
@@ -285,7 +287,7 @@ class ConnectionManager:
                         health_thread = threading.Thread(
                             target=health_check, daemon=True
                         )
-                        logging.info("Starting health check thread...")
+                        logging.debug("Starting health check thread...")
                         health_thread.start()
                         health_thread.join(
                             timeout=5
@@ -296,7 +298,7 @@ class ConnectionManager:
                             logging.warning("Health check timed out after 5 seconds")
                             raise TimeoutError("Health check timed out after 5 seconds")
 
-                        logging.info(
+                        logging.debug(
                             f"Health check result: success={result.success}, exception={result.exception}"
                         )
 
@@ -307,7 +309,7 @@ class ConnectionManager:
                                 self.connection_errors = 0
                                 self.connected = True  # Ensure connected state is set
                                 self.last_successful_health_check = time.time()  # Update last successful check on successful health check
-                            logging.info(
+                            logging.debug(
                                 "Health check passed successfully, reset errors and updated heartbeat"
                             )
                         else:
@@ -343,11 +345,11 @@ class ConnectionManager:
                     if not self.stop_event.is_set():
                         self.reconnect(skip_lock=True)
                 else:
-                    logging.info(
+                    logging.debug(
                         "Skipping health check - interface doesn't exist or shutdown requested"
                     )
 
-                logging.info("=== HEALTH MONITOR CYCLE END ===")
+                logging.debug("=== HEALTH MONITOR CYCLE END ===")
 
             except Exception as e:
                 logging.error(f"Error in health monitor: {e}")

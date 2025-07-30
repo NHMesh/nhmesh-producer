@@ -5,7 +5,7 @@ ConnectionManager for managing Meshtastic interface connections with automatic r
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 import meshtastic
 import meshtastic.tcp_interface
@@ -231,12 +231,11 @@ class ConnectionManager:
                     try:
                         # Use threading-based timeout for health check
                         import threading
-                        from typing import Optional
 
                         class HealthCheckResult:
                             def __init__(self):
                                 self.success: bool = False
-                                self.exception: Optional[Exception] = None
+                                self.exception: Exception | None = None
 
                         result = HealthCheckResult()
 

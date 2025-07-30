@@ -371,7 +371,7 @@ class MeshtasticMQTTHandler:
 
         self.publish_dict_to_mqtt(out_packet)
 
-    def onDisconnect(self, interface: Any, error: str = None) -> None:
+    def onDisconnect(self, interface: Any, error: str | None = None) -> None:
         """
         Handles Meshtastic disconnection events.
         Args:
@@ -398,7 +398,8 @@ class MeshtasticMQTTHandler:
 
         # Trigger immediate reconnection through the connection manager
         if hasattr(self, "connection_manager"):
-            self.connection_manager.handle_external_error(f"Disconnect event: {error}")
+            error_msg = f"Disconnect event: {error}" if error else "Disconnect event"
+            self.connection_manager.handle_external_error(error_msg)
 
     def onConnect(self, interface: Any) -> None:
         """

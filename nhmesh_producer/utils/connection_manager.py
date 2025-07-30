@@ -5,7 +5,7 @@ ConnectionManager for managing Meshtastic interface connections with automatic r
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Optional
 
 import meshtastic
 import meshtastic.tcp_interface
@@ -231,11 +231,12 @@ class ConnectionManager:
                     try:
                         # Use threading-based timeout for health check
                         import threading
+                        from typing import Optional
 
                         class HealthCheckResult:
                             def __init__(self):
-                                self.success = False
-                                self.exception = None
+                                self.success: bool = False
+                                self.exception: Optional[Exception] = None
 
                         result = HealthCheckResult()
 
@@ -312,10 +313,14 @@ class ConnectionManager:
                             )
                         else:
                             # Health check failed
-                            logging.error(
-                                f"Health check failed with exception: {result.exception}"
-                            )
-                            raise result.exception
+                            if result.exception is not None:
+                                logging.error(
+                                    f"Health check failed with exception: {result.exception}"
+                                )
+                                raise result.exception
+                            else:
+                                logging.error("Health check failed with unknown error")
+                                raise Exception("Health check failed")
 
                     except (Exception, TimeoutError) as e:
                         logging.warning(f"Health check failed: {e}")
@@ -356,7 +361,7 @@ class ConnectionManager:
         """Check if currently connected"""
         return self.connected and self.interface is not None
 
-    def get_health_status(self) -> dict:
+    def get_health_status(self) -> dict[str, Any]:
         """Get detailed health status for debugging"""
         with self.lock:
             return {

@@ -47,7 +47,9 @@ class ConnectionManager:
         """Call this method when a packet is received to update the last packet time"""
         with self.lock:
             self.last_packet_time = time.time()
-            logging.debug(f"Packet received, updated last_packet_time to {self.last_packet_time}")
+            logging.debug(
+                f"Packet received, updated last_packet_time to {self.last_packet_time}"
+            )
 
     def connect(self, skip_lock: bool = False) -> bool:
         """Establish connection to Meshtastic node with error handling"""
@@ -206,9 +208,7 @@ class ConnectionManager:
                     time_since_last_success = (
                         time.time() - self.last_successful_health_check
                     )
-                    time_since_last_packet = (
-                        time.time() - self.last_packet_time
-                    )
+                    time_since_last_packet = time.time() - self.last_packet_time
 
                     if (
                         not self.connected
@@ -397,9 +397,6 @@ class ConnectionManager:
                 "health_check_interval": self.health_check_interval,
                 "time_since_last_heartbeat": time.time() - self.last_heartbeat
                 if self.last_heartbeat
-                else None,
-                "time_since_last_packet": time.time() - self.last_packet_time
-                if self.last_packet_time
                 else None,
                 "time_since_last_packet": time.time() - self.last_packet_time
                 if self.last_packet_time

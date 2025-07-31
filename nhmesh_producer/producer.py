@@ -179,14 +179,18 @@ class MeshtasticMQTTHandler:
             self.mqtt_connected = True
             self.mqtt_reconnect_attempts = 0
             logging.info("Connected to MQTT broker")
-            
+
             # Subscribe to listen topic if specified
             if self.mqtt_listen_topic:
                 try:
                     client.subscribe(self.mqtt_listen_topic)
-                    logging.info(f"Subscribed to MQTT listen topic: {self.mqtt_listen_topic}")
+                    logging.info(
+                        f"Subscribed to MQTT listen topic: {self.mqtt_listen_topic}"
+                    )
                 except Exception as e:
-                    logging.error(f"Failed to subscribe to MQTT topic {self.mqtt_listen_topic}: {e}")
+                    logging.error(
+                        f"Failed to subscribe to MQTT topic {self.mqtt_listen_topic}: {e}"
+                    )
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
 
@@ -203,23 +207,23 @@ class MeshtasticMQTTHandler:
         """Callback for MQTT message reception"""
         try:
             logging.info(f"Received MQTT message on topic '{msg.topic}': {msg.payload}")
-            
+
             # Parse the message payload
             if isinstance(msg.payload, bytes):
-                payload_str = msg.payload.decode('utf-8')
+                payload_str = msg.payload.decode("utf-8")
             else:
                 payload_str = str(msg.payload)
-            
+
             # Try to parse as JSON
             try:
                 message_data = json.loads(payload_str)
             except json.JSONDecodeError:
                 logging.error(f"Failed to parse MQTT message as JSON: {payload_str}")
                 return
-            
+
             # Send the message via Meshtastic
             self._send_message_via_meshtastic(message_data)
-            
+
         except Exception as e:
             logging.error(f"Error handling MQTT message: {e}")
 
@@ -231,17 +235,17 @@ class MeshtasticMQTTHandler:
             if not interface:
                 logging.error("No Meshtastic interface available for sending message")
                 return
-            
+
             # Extract message details
-            text = message_data.get('text', '')
-            to_id = message_data.get('to', '')
-            
+            text = message_data.get("text", "")
+            to_id = message_data.get("to", "")
+
             if not text:
                 logging.error("No text content found in message data")
                 return
-            
+
             logging.info(f"Sending message via Meshtastic: '{text}' to '{to_id}'")
-            
+
             # Send the message via Meshtastic
             if to_id:
                 # Send to specific node
@@ -249,9 +253,9 @@ class MeshtasticMQTTHandler:
             else:
                 # Broadcast message
                 interface.sendText(text)
-            
+
             logging.info("Message sent successfully via Meshtastic")
-            
+
         except Exception as e:
             logging.error(f"Failed to send message via Meshtastic: {e}")
 

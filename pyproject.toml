@@ -1,7 +1,7 @@
 [project]
 name = "nhmesh-producer"
-version = "0.2.1"
-description = "A resilient Meshtastic MQTT producer with automatic reconnection and connection health monitoring"
+version = "0.2.2"
+description = "A resilient Meshtastic MQTT producer with automatic reconnection, connection health monitoring, and bidirectional MQTT communication"
 authors = [
     {name = "grleblanc", email = "greg@glsec.us"}
 ]

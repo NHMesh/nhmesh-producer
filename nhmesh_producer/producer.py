@@ -340,6 +340,9 @@ class MeshtasticMQTTHandler:
         )
         logging.debug(f"[onReceive] Raw packet: {packet_dict}")
 
+        # Notify connection manager that a packet was received
+        self.connection_manager.packet_received()
+
         self._update_cache_from_packet(packet_dict)
 
         out_packet: dict[str, Any] = {}

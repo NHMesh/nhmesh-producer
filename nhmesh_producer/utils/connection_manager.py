@@ -20,14 +20,17 @@ class ConnectionManager:
         reconnect_attempts: int = 5,
         reconnect_delay: int = 5,
         health_check_interval: int = 10,  # Back to 10 seconds since events handle immediate detection
+        packet_timeout: int = 60,  # Reconnect if no packets received for 60 seconds
     ) -> None:
         self.node_ip = node_ip
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay = reconnect_delay
         self.health_check_interval = health_check_interval
+        self.packet_timeout = packet_timeout
         self.interface: Any = None
         self.connected = False
         self.last_heartbeat = time.time()
+        self.last_packet_time = time.time()  # Track when last packet was received
         self.connection_errors = 0
         self.max_connection_errors = 10
         self.lock = threading.Lock()
@@ -39,6 +42,14 @@ class ConnectionManager:
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         self.health_thread.start()
+
+    def packet_received(self) -> None:
+        """Call this method when a packet is received to update the last packet time"""
+        with self.lock:
+            self.last_packet_time = time.time()
+            logging.debug(
+                f"Packet received, updated last_packet_time to {self.last_packet_time}"
+            )
 
     def connect(self, skip_lock: bool = False) -> bool:
         """Establish connection to Meshtastic node with error handling"""
@@ -197,23 +208,29 @@ class ConnectionManager:
                     time_since_last_success = (
                         time.time() - self.last_successful_health_check
                     )
+                    time_since_last_packet = time.time() - self.last_packet_time
 
                     if (
                         not self.connected
                         or self.connection_errors >= self.max_connection_errors
                         or time_since_last_success
                         > 30  # Force reconnect if no successful check in 30 seconds
+                        or time_since_last_packet > self.packet_timeout
                     ):
                         should_reconnect = True
 
                 logging.debug(
-                    f"Health check status: connected={current_connected}, errors={current_errors}/{current_max_errors}, interface_exists={interface_exists}, should_reconnect={should_reconnect}, time_since_last_success={time_since_last_success:.1f}s"
+                    f"Health check status: connected={current_connected}, errors={current_errors}/{current_max_errors}, interface_exists={interface_exists}, should_reconnect={should_reconnect}, time_since_last_success={time_since_last_success:.1f}s, time_since_last_packet={time_since_last_packet:.1f}s"
                 )
 
                 if should_reconnect:
                     if time_since_last_success > 30:
                         logging.warning(
                             f"Connection health check failed - no successful check in {time_since_last_success:.1f}s, forcing reconnection"
+                        )
+                    elif time_since_last_packet > self.packet_timeout:
+                        logging.warning(
+                            f"Connection health check failed - no packets received in {time_since_last_packet:.1f}s, forcing reconnection"
                         )
                     else:
                         logging.warning(
@@ -370,6 +387,8 @@ class ConnectionManager:
                 "connection_errors": self.connection_errors,
                 "max_connection_errors": self.max_connection_errors,
                 "last_heartbeat": self.last_heartbeat,
+                "last_packet_time": self.last_packet_time,
+                "packet_timeout": self.packet_timeout,
                 "health_monitor_alive": hasattr(self, "health_thread")
                 and self.health_thread.is_alive(),
                 "stop_event_set": self.stop_event.is_set(),
@@ -379,11 +398,19 @@ class ConnectionManager:
                 "time_since_last_heartbeat": time.time() - self.last_heartbeat
                 if self.last_heartbeat
                 else None,
+                "time_since_last_packet": time.time() - self.last_packet_time
+                if self.last_packet_time
+                else None,
             }
 
     def is_health_monitor_working(self) -> bool:
         """Check if the health monitor thread is alive and working"""
         return hasattr(self, "health_thread") and self.health_thread.is_alive()
+
+    def is_packet_timeout_expired(self) -> bool:
+        """Check if the packet timeout has expired (no packets received for packet_timeout seconds)"""
+        with self.lock:
+            return time.time() - self.last_packet_time > self.packet_timeout
 
     def force_reconnect(self) -> None:
         """Force immediate reconnection - useful when connection errors are detected externally"""

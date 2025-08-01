@@ -249,10 +249,10 @@ class MeshtasticMQTTHandler:
             # Send the message via Meshtastic
             if to_id:
                 # Send to specific node
-                interface.sendText(text, destinationId=to_id)
+                interface.sendText(text, channelIndex=1, destinationId=to_id)
             else:
                 # Broadcast message
-                interface.sendText(text)
+                interface.sendText(text, channelIndex=1)
 
             logging.info("Message sent successfully via Meshtastic")
 

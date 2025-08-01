@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.2](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.1...v0.2.2) (2025-01-15)
+
+
+### Features
+
+* **mqtt-listener:** add bidirectional MQTT communication - listen for incoming messages on configurable MQTT topics and send them via Meshtastic network
+* **mqtt-listener:** support for both broadcast and targeted messages with JSON message format
+* **mqtt-listener:** automatic reconnection and error handling for MQTT listener functionality
+* **mqtt-listener:** add `--mqtt-listen-topic` command line argument and `MQTT_LISTEN_TOPIC` environment variable
+* **documentation:** add comprehensive documentation for MQTT listener feature in `docs/mqtt_listener.md`
+* **testing:** add test script `scripts/test_mqtt_listener.py` for MQTT listener functionality
+
 ## [0.2.1](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.0...v0.2.1) (2025-07-30)
 
 

@@ -1,7 +1,8 @@
 """
 This script is a producer for the NHMeshLive project.
 It connects to a Meshtastic node and an MQTT broker,
-and publishes received packets to the MQTT broker with automatic reconnection.
+publishes received packets to the MQTT broker with automatic reconnection,
+and can listen for incoming messages on MQTT topics to send via Meshtastic.
 """
 
 import argparse
@@ -38,7 +39,8 @@ class MeshtasticMQTTHandler:
     """
     A class to handle Meshtastic MQTT communication.
     This class connects to a Meshtastic node and an MQTT broker,
-    and publishes received packets to the MQTT broker.
+    publishes received packets to the MQTT broker, and can listen
+    for incoming messages on MQTT topics to send via Meshtastic.
 
     Args:
         broker (str): The MQTT broker address.
@@ -52,6 +54,7 @@ class MeshtasticMQTTHandler:
         traceroute_interval (int): Interval between periodic traceroutes in seconds (default: 43200).
         traceroute_max_retries (int): Maximum retry attempts for failed traceroutes (default: 3).
         traceroute_max_backoff (int): Maximum backoff time in seconds (default: 86400).
+        mqtt_listen_topic (str, optional): MQTT topic to listen for incoming messages to send via Meshtastic.
     """
 
     def __init__(
@@ -68,6 +71,7 @@ class MeshtasticMQTTHandler:
         traceroute_max_retries: int = 3,
         traceroute_max_backoff: int = 86400,
         traceroute_persistence_file: str = "/tmp/traceroute_state.json",
+        mqtt_listen_topic: str | None = None,
     ) -> None:
         """
         Initializes the MeshtasticMQTTHandler with improved connection management.
@@ -79,6 +83,7 @@ class MeshtasticMQTTHandler:
         self.username = username
         self.password = password
         self.node_ip = node_ip
+        self.mqtt_listen_topic = mqtt_listen_topic
 
         # Initialize connection manager
         self.connection_manager = ConnectionManager(node_ip)
@@ -115,6 +120,7 @@ class MeshtasticMQTTHandler:
         self.mqtt_client.on_connect = self._on_mqtt_connect
         self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self.mqtt_client.on_publish = self._on_mqtt_publish
+        self.mqtt_client.on_message = self._on_mqtt_message
 
         # MQTT connection state
         self.mqtt_connected = False
@@ -173,6 +179,18 @@ class MeshtasticMQTTHandler:
             self.mqtt_connected = True
             self.mqtt_reconnect_attempts = 0
             logging.info("Connected to MQTT broker")
+
+            # Subscribe to listen topic if specified
+            if self.mqtt_listen_topic:
+                try:
+                    client.subscribe(self.mqtt_listen_topic)
+                    logging.info(
+                        f"Subscribed to MQTT listen topic: {self.mqtt_listen_topic}"
+                    )
+                except Exception as e:
+                    logging.error(
+                        f"Failed to subscribe to MQTT topic {self.mqtt_listen_topic}: {e}"
+                    )
         else:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
 
@@ -184,6 +202,62 @@ class MeshtasticMQTTHandler:
     def _on_mqtt_publish(self, client: Any, userdata: Any, mid: int) -> None:
         """Callback for MQTT publish"""
         logging.debug(f"Message published: {mid}")
+
+    def _on_mqtt_message(self, client: Any, userdata: Any, msg: Any) -> None:
+        """Callback for MQTT message reception"""
+        try:
+            logging.info(f"Received MQTT message on topic '{msg.topic}': {msg.payload}")
+
+            # Parse the message payload
+            if isinstance(msg.payload, bytes):
+                payload_str = msg.payload.decode("utf-8")
+            else:
+                payload_str = str(msg.payload)
+
+            # Try to parse as JSON
+            try:
+                message_data = json.loads(payload_str)
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse MQTT message as JSON: {payload_str}")
+                return
+
+            # Send the message via Meshtastic
+            self._send_message_via_meshtastic(message_data)
+
+        except Exception as e:
+            logging.error(f"Error handling MQTT message: {e}")
+
+    def _send_message_via_meshtastic(self, message_data: dict[str, Any]) -> None:
+        """Send a message via the Meshtastic TCP connection"""
+        try:
+            # Get the interface
+            interface = self.connection_manager.get_interface()
+            if not interface:
+                logging.error("No Meshtastic interface available for sending message")
+                return
+
+            # Extract message details
+            text = message_data.get("text", "")
+            to_id = message_data.get("to", "")
+
+            if not text:
+                logging.error("No text content found in message data")
+                return
+
+            logging.info(f"Sending message via Meshtastic: '{text}' to '{to_id}'")
+
+            # Send the message via Meshtastic
+            if to_id:
+                # Send to specific node
+                interface.sendText(text, channelIndex=1, destinationId=to_id)
+            else:
+                # Broadcast message
+                interface.sendText(text, channelIndex=1)
+
+            logging.info("Message sent successfully via Meshtastic")
+
+        except Exception as e:
+            logging.error(f"Failed to send message via Meshtastic: {e}")
 
     def _update_interface_references(self) -> None:
         """Update interface references in NodeCache and TracerouteManager after reconnection"""
@@ -534,6 +608,12 @@ if __name__ == "__main__":
         envvar="TRACEROUTE_PERSISTENCE_FILE",
         help="Path to file for persisting traceroute retry/backoff state (default: /tmp/traceroute_state.json)",
     )
+    parser.add_argument(
+        "--mqtt-listen-topic",
+        action=EnvDefault,
+        envvar="MQTT_LISTEN_TOPIC",
+        help="MQTT topic to listen for incoming messages to send via Meshtastic",
+    )
     args = parser.parse_args()
 
     try:
@@ -550,6 +630,7 @@ if __name__ == "__main__":
             args.traceroute_max_retries,
             args.traceroute_max_backoff,
             args.traceroute_persistence_file,
+            args.mqtt_listen_topic,
         )
 
         # Register signal handlers for graceful shutdown AFTER client creation

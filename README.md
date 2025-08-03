@@ -43,6 +43,7 @@ docker run -d \
 | `TRACEROUTE_MAX_RETRIES`      | `3`                          | Maximum number of retry attempts for failed traceroutes               |
 | `TRACEROUTE_MAX_BACKOFF`      | `86400`                      | Maximum backoff time in seconds for failed nodes (24 hours)           |
 | `TRACEROUTE_PERSISTENCE_FILE` | `/tmp/traceroute_state.json` | Path to file for persisting retry/backoff state across restarts       |
+| `MQTT_LISTEN_TOPIC`           | -                            | MQTT topic to listen for incoming messages to send via Meshtastic     |
 
 ### Command Line Options
 
@@ -53,7 +54,8 @@ python -m nhmesh_producer.producer \
     --topic msh/US/NH/ \
     --username your_username \
     --password your_password \
-    --node-ip 192.168.1.100
+    --node-ip 192.168.1.100 \
+    --mqtt-listen-topic msh/US/NH/send
 ```
 
 ## Features
@@ -85,6 +87,15 @@ python -m nhmesh_producer.producer \
 - Periodic route quality monitoring
 - Network topology analysis
 - Route quality metrics and statistics
+
+### 📡 **MQTT Listener**
+
+- Bidirectional MQTT communication
+- Listen for incoming messages on configurable MQTT topics
+- Send messages via Meshtastic network using TCP connection
+- Support for both broadcast and targeted messages
+- JSON message format with text and destination fields
+- Automatic reconnection and error handling
 
 ## Installation
 

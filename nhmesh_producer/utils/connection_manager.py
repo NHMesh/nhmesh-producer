@@ -33,11 +33,13 @@ class ConnectionManager:
         self.last_packet_time = time.time()  # Track when last packet was received
         self.connection_errors = 0
         self.max_connection_errors = 10
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()  # Use RLock to allow reentrant locking
         self.stop_event = threading.Event()
         self.node_info: dict[str, Any] | None = None
         self.connected_node_id: str | None = None
         self.last_successful_health_check = time.time()
+        self.reconnecting = False  # Flag to prevent multiple simultaneous reconnections
+        self.health_check_in_progress = False  # Flag to prevent overlapping health checks
 
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
@@ -51,19 +53,28 @@ class ConnectionManager:
                 f"Packet received, updated last_packet_time to {self.last_packet_time}"
             )
 
+    def _close_interface_safely(self) -> None:
+        """Safely close the interface with proper error handling"""
+        if self.interface:
+            try:
+                logging.info("Closing existing interface...")
+                self.interface.close()
+                logging.info("Existing interface closed successfully")
+            except Exception as e:
+                logging.warning(f"Error closing existing interface: {e}")
+            finally:
+                self.interface = None
+                self.connected = False
+
     def connect(self, skip_lock: bool = False) -> bool:
         """Establish connection to Meshtastic node with error handling"""
         logging.info(f"connect() called with skip_lock={skip_lock}")
-        if skip_lock:
-            # Direct connection without lock (for health monitor thread)
+        
+        def _connect_internal() -> bool:
+            """Internal connection logic with proper cleanup"""
             try:
-                if self.interface:
-                    try:
-                        logging.info("Closing existing interface...")
-                        self.interface.close()
-                        logging.info("Existing interface closed")
-                    except Exception as e:
-                        logging.warning(f"Error closing existing interface: {e}")
+                # Always close existing interface first
+                self._close_interface_safely()
 
                 logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
                 self.interface = meshtastic.tcp_interface.TCPInterface(
@@ -84,9 +95,7 @@ class ConnectionManager:
                 self.connected = True
                 self.connection_errors = 0
                 self.last_heartbeat = time.time()
-                self.last_successful_health_check = (
-                    time.time()
-                )  # Update last successful check on successful connection
+                self.last_successful_health_check = time.time()
 
                 logging.info(f"Successfully connected to node {self.connected_node_id}")
                 return True
@@ -95,89 +104,76 @@ class ConnectionManager:
                 logging.error(f"Failed to connect to Meshtastic node: {e}")
                 self.connected = False
                 self.connection_errors += 1
+                # Clean up failed interface
+                self._close_interface_safely()
                 return False
-        else:
-            # Normal connection with lock
+
+        if skip_lock:
+            # Health monitor thread - use existing lock to prevent race conditions
             with self.lock:
-                try:
-                    if self.interface:
-                        try:
-                            logging.info("Closing existing interface...")
-                            self.interface.close()
-                            logging.info("Existing interface closed")
-                        except Exception as e:
-                            logging.warning(f"Error closing existing interface: {e}")
-
-                    logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
-                    self.interface = meshtastic.tcp_interface.TCPInterface(
-                        hostname=self.node_ip
-                    )
-                    logging.info("TCPInterface created successfully")
-
-                    # Test connection by getting node info
-                    logging.info("Testing connection by calling getMyNodeInfo()...")
-                    self.node_info = self.interface.getMyNodeInfo()
-                    logging.info(f"getMyNodeInfo() returned: {self.node_info}")
-                    if self.node_info is None:
-                        raise Exception(
-                            "Failed to get node info - connection may be invalid"
-                        )
-                    self.connected_node_id = self.node_info["user"]["id"]
-
-                    self.connected = True
-                    self.connection_errors = 0
-                    self.last_heartbeat = time.time()
-                    self.last_successful_health_check = (
-                        time.time()
-                    )  # Update last successful check on successful connection
-
-                    logging.info(
-                        f"Successfully connected to node {self.connected_node_id}"
-                    )
-                    return True
-
-                except Exception as e:
-                    logging.error(f"Failed to connect to Meshtastic node: {e}")
-                    self.connected = False
-                    self.connection_errors += 1
-                    return False
+                return _connect_internal()
+        else:
+            # Main thread - use lock
+            with self.lock:
+                return _connect_internal()
 
     def reconnect(self, skip_lock: bool = False) -> bool:
-        """Attempt to reconnect with exponential backoff"""
+        """Attempt to reconnect with exponential backoff and proper synchronization"""
         logging.info(f"reconnect() called with skip_lock={skip_lock}")
-        attempts = 0
-        while attempts < self.reconnect_attempts and not self.stop_event.is_set():
-            attempts += 1
-            logging.info(f"Reconnection attempt {attempts}/{self.reconnect_attempts}")
+        
+        def _reconnect_internal() -> bool:
+            """Internal reconnection logic with proper state management"""
+            # Check if already reconnecting to prevent multiple simultaneous reconnections
+            if self.reconnecting:
+                logging.info("Reconnection already in progress, skipping")
+                return False
+            
+            self.reconnecting = True
+            try:
+                attempts = 0
+                while attempts < self.reconnect_attempts and not self.stop_event.is_set():
+                    attempts += 1
+                    logging.info(f"Reconnection attempt {attempts}/{self.reconnect_attempts}")
 
-            logging.info("Calling connect() from reconnect()...")
-            if self.connect(skip_lock=skip_lock):
-                logging.info("connect() succeeded, reconnection successful")
-                return True
-            else:
-                logging.warning("connect() failed")
+                    logging.info("Calling connect() from reconnect()...")
+                    if self.connect(skip_lock=True):  # Always use skip_lock=True for internal calls
+                        logging.info("connect() succeeded, reconnection successful")
+                        return True
+                    else:
+                        logging.warning("connect() failed")
 
-            # Check if shutdown was requested
-            if self.stop_event.is_set():
-                logging.info("Shutdown requested during reconnection, aborting")
-                break
+                    # Check if shutdown was requested
+                    if self.stop_event.is_set():
+                        logging.info("Shutdown requested during reconnection, aborting")
+                        break
 
-            # Exponential backoff with interruptible wait
-            delay = self.reconnect_delay * (2 ** (attempts - 1))
-            logging.info(
-                f"Reconnection failed, waiting {delay} seconds before next attempt"
-            )
+                    # Exponential backoff with interruptible wait
+                    delay = self.reconnect_delay * (2 ** (attempts - 1))
+                    logging.info(
+                        f"Reconnection failed, waiting {delay} seconds before next attempt"
+                    )
 
-            # Use interruptible wait instead of time.sleep
-            if self.stop_event.wait(timeout=delay):
-                logging.info("Shutdown requested during reconnection delay, aborting")
-                break
+                    # Use interruptible wait instead of time.sleep
+                    if self.stop_event.wait(timeout=delay):
+                        logging.info("Shutdown requested during reconnection delay, aborting")
+                        break
 
-        if self.stop_event.is_set():
-            logging.info("Reconnection aborted due to shutdown")
+                if self.stop_event.is_set():
+                    logging.info("Reconnection aborted due to shutdown")
+                else:
+                    logging.error("Max reconnection attempts reached")
+                return False
+            finally:
+                self.reconnecting = False
+
+        if skip_lock:
+            # Health monitor thread - use existing lock
+            with self.lock:
+                return _reconnect_internal()
         else:
-            logging.error("Max reconnection attempts reached")
-        return False
+            # Main thread - use lock
+            with self.lock:
+                return _reconnect_internal()
 
     def _health_monitor(self) -> None:
         """Monitor connection health and trigger reconnection if needed"""
@@ -245,6 +241,13 @@ class ConnectionManager:
                 # Always check interface health if we have an interface, regardless of connected state
                 if self.interface and not self.stop_event.is_set():
                     logging.debug("Interface exists, performing health check...")
+                    
+                    # Prevent overlapping health checks
+                    if self.health_check_in_progress:
+                        logging.debug("Health check already in progress, skipping")
+                        continue
+                    
+                    self.health_check_in_progress = True
                     try:
                         # Use threading-based timeout for health check
                         import threading
@@ -352,6 +355,8 @@ class ConnectionManager:
                                 "Health check failed, triggering immediate reconnection"
                             )
                             self.reconnect(skip_lock=True)
+                    finally:
+                        self.health_check_in_progress = False
                 elif not self.interface and not self.stop_event.is_set():
                     # No interface exists, try to reconnect
                     logging.warning("No interface exists, attempting reconnection")
@@ -401,6 +406,8 @@ class ConnectionManager:
                 "time_since_last_packet": time.time() - self.last_packet_time
                 if self.last_packet_time
                 else None,
+                "reconnecting": self.reconnecting,
+                "health_check_in_progress": self.health_check_in_progress,
             }
 
     def is_health_monitor_working(self) -> bool:
@@ -459,10 +466,5 @@ class ConnectionManager:
             else:
                 logging.info("Health monitor thread finished cleanly")
 
-        if self.interface:
-            try:
-                self.interface.close()
-                logging.info("Interface closed successfully")
-            except Exception as e:
-                logging.warning(f"Error closing interface: {e}")
-        self.connected = False
+        # Close interface with proper cleanup
+        self._close_interface_safely()

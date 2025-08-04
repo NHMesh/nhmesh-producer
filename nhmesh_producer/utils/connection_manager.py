@@ -42,6 +42,9 @@ class ConnectionManager:
         self.health_check_in_progress = (
             False  # Flag to prevent overlapping health checks
         )
+        self.connection_in_progress = False  # Flag to prevent multiple connection attempts
+        self.last_connection_time = 0  # Track when we last connected
+        self.min_connection_time = 30  # Minimum time between connections (30 seconds)
 
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
@@ -60,6 +63,16 @@ class ConnectionManager:
         if self.interface:
             try:
                 logging.info("Closing existing interface...")
+                # Close the underlying socket first if it exists
+                if hasattr(self.interface, 'socket') and self.interface.socket:
+                    try:
+                        logging.debug(f"Closing socket: {self.interface.socket}")
+                        self.interface.socket.close()
+                        logging.debug("Underlying socket closed")
+                    except Exception as e:
+                        logging.warning(f"Error closing underlying socket: {e}")
+                
+                # Close the interface
                 self.interface.close()
                 logging.info("Existing interface closed successfully")
             except Exception as e:
@@ -68,12 +81,44 @@ class ConnectionManager:
                 self.interface = None
                 self.connected = False
 
+    def _check_existing_connections(self) -> bool:
+        """Check if there are existing connections that should be cleaned up"""
+        if self.interface:
+            try:
+                # Check if the interface has a valid socket
+                if hasattr(self.interface, 'socket') and self.interface.socket:
+                    # Try to get socket info to see if it's still valid
+                    try:
+                        socket_info = self.interface.socket.getsockname()
+                        logging.debug(f"Existing socket found: {socket_info}")
+                        return True
+                    except Exception:
+                        logging.warning("Existing socket appears to be invalid, will be cleaned up")
+                        return False
+                else:
+                    logging.warning("Interface exists but has no socket, will be cleaned up")
+                    return False
+            except Exception as e:
+                logging.warning(f"Error checking existing connections: {e}")
+                return False
+        return False
+
     def connect(self, skip_lock: bool = False) -> bool:
         """Establish connection to Meshtastic node with error handling"""
         logging.info(f"connect() called with skip_lock={skip_lock}")
 
         def _connect_internal() -> bool:
             """Internal connection logic with proper cleanup"""
+            # Check if connection is already in progress
+            if self.connection_in_progress:
+                logging.info("Connection already in progress, skipping")
+                return False
+            
+            # Check for existing connections
+            if self._check_existing_connections():
+                logging.info("Existing connection found, will be cleaned up before new connection")
+            
+            self.connection_in_progress = True
             try:
                 # Always close existing interface first
                 self._close_interface_safely()
@@ -82,7 +127,16 @@ class ConnectionManager:
                 self.interface = meshtastic.tcp_interface.TCPInterface(
                     hostname=self.node_ip
                 )
-                logging.info("TCPInterface created successfully")
+                logging.info(f"TCPInterface created successfully: {self.interface}")
+                
+                # Log socket information for debugging
+                if hasattr(self.interface, 'socket') and self.interface.socket:
+                    logging.debug(f"Socket created: {self.interface.socket}")
+                    try:
+                        socket_info = self.interface.socket.getsockname()
+                        logging.debug(f"Socket local address: {socket_info}")
+                    except Exception as e:
+                        logging.debug(f"Could not get socket info: {e}")
 
                 # Test connection by getting node info
                 logging.info("Testing connection by calling getMyNodeInfo()...")
@@ -98,17 +152,29 @@ class ConnectionManager:
                 self.connection_errors = 0
                 self.last_heartbeat = time.time()
                 self.last_successful_health_check = time.time()
+                self.last_connection_time = time.time() # Update last connection time on successful connection
 
                 logging.info(f"Successfully connected to node {self.connected_node_id}")
                 return True
 
             except Exception as e:
-                logging.error(f"Failed to connect to Meshtastic node: {e}")
+                error_str = str(e).lower()
+                if any(keyword in error_str for keyword in ['broken pipe', 'connection reset', 'connection refused']):
+                    logging.warning(f"Connection error detected (likely remote server issue): {e}")
+                    # For these specific errors, don't increment connection_errors as aggressively
+                    # since they're likely server-side issues
+                    if self.connection_errors < 5:  # Only increment if we haven't had too many errors
+                        self.connection_errors += 1
+                else:
+                    logging.error(f"Failed to connect to Meshtastic node: {e}")
+                    self.connection_errors += 1
+                
                 self.connected = False
-                self.connection_errors += 1
                 # Clean up failed interface
                 self._close_interface_safely()
                 return False
+            finally:
+                self.connection_in_progress = False
 
         if skip_lock:
             # Health monitor thread - use existing lock to prevent race conditions
@@ -215,8 +281,13 @@ class ConnectionManager:
                         time.time() - self.last_successful_health_check
                     )
                     time_since_last_packet = time.time() - self.last_packet_time
+                    time_since_last_connection = time.time() - self.last_connection_time
 
-                    if (
+                    # Only attempt reconnection if we have been connected for at least min_connection_time
+                    if self.connected and time_since_last_connection < self.min_connection_time:
+                        logging.debug(f"Not attempting reconnection due to minimum connection time ({time_since_last_connection:.1f}s < {self.min_connection_time}s)")
+                        should_reconnect = False
+                    elif (
                         not self.connected
                         or self.connection_errors >= self.max_connection_errors
                         or time_since_last_success
@@ -226,7 +297,7 @@ class ConnectionManager:
                         should_reconnect = True
 
                 logging.debug(
-                    f"Health check status: connected={current_connected}, errors={current_errors}/{current_max_errors}, interface_exists={interface_exists}, should_reconnect={should_reconnect}, time_since_last_success={time_since_last_success:.1f}s, time_since_last_packet={time_since_last_packet:.1f}s"
+                    f"Health check status: connected={current_connected}, errors={current_errors}/{current_max_errors}, interface_exists={interface_exists}, should_reconnect={should_reconnect}, time_since_last_success={time_since_last_success:.1f}s, time_since_last_packet={time_since_last_packet:.1f}s, time_since_last_connection={time_since_last_connection:.1f}s"
                 )
 
                 if should_reconnect:
@@ -354,10 +425,19 @@ class ConnectionManager:
                                 raise Exception("Health check failed")
 
                     except (Exception, TimeoutError) as e:
-                        logging.warning(f"Health check failed: {e}")
-                        with self.lock:
-                            self.connected = False
-                            self.connection_errors += 1
+                        error_str = str(e).lower()
+                        if any(keyword in error_str for keyword in ['broken pipe', 'connection reset', 'connection refused']):
+                            logging.warning(f"Health check failed with connection error (likely server issue): {e}")
+                            # For connection errors, be less aggressive about incrementing errors
+                            with self.lock:
+                                self.connected = False
+                                if self.connection_errors < 5:  # Only increment if we haven't had too many errors
+                                    self.connection_errors += 1
+                        else:
+                            logging.warning(f"Health check failed: {e}")
+                            with self.lock:
+                                self.connected = False
+                                self.connection_errors += 1
 
                         # Immediately trigger reconnection on health check failure
                         if not self.stop_event.is_set():
@@ -394,6 +474,31 @@ class ConnectionManager:
         """Check if currently connected"""
         return self.connected and self.interface is not None
 
+    def get_connection_info(self) -> dict[str, Any]:
+        """Get detailed connection information for debugging"""
+        with self.lock:
+            info = {
+                "node_ip": self.node_ip,
+                "connected": self.connected,
+                "interface_exists": self.interface is not None,
+                "connected_node_id": self.connected_node_id,
+                "connection_errors": self.connection_errors,
+                "reconnecting": self.reconnecting,
+                "connection_in_progress": self.connection_in_progress,
+                "health_check_in_progress": self.health_check_in_progress,
+            }
+            
+            if self.interface and hasattr(self.interface, 'socket') and self.interface.socket:
+                try:
+                    socket = self.interface.socket
+                    info["socket_local"] = socket.getsockname()
+                    info["socket_remote"] = socket.getpeername()
+                    info["socket_fileno"] = socket.fileno()
+                except Exception as e:
+                    info["socket_error"] = str(e)
+            
+            return info
+
     def get_health_status(self) -> dict[str, Any]:
         """Get detailed health status for debugging"""
         with self.lock:
@@ -418,6 +523,12 @@ class ConnectionManager:
                 else None,
                 "reconnecting": self.reconnecting,
                 "health_check_in_progress": self.health_check_in_progress,
+                "connection_in_progress": self.connection_in_progress,
+                "last_connection_time": self.last_connection_time,
+                "min_connection_time": self.min_connection_time,
+                "time_since_last_connection": time.time() - self.last_connection_time
+                if self.last_connection_time
+                else None,
             }
 
     def is_health_monitor_working(self) -> bool:

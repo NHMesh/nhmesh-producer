@@ -39,7 +39,9 @@ class ConnectionManager:
         self.connected_node_id: str | None = None
         self.last_successful_health_check = time.time()
         self.reconnecting = False  # Flag to prevent multiple simultaneous reconnections
-        self.health_check_in_progress = False  # Flag to prevent overlapping health checks
+        self.health_check_in_progress = (
+            False  # Flag to prevent overlapping health checks
+        )
 
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
@@ -69,7 +71,7 @@ class ConnectionManager:
     def connect(self, skip_lock: bool = False) -> bool:
         """Establish connection to Meshtastic node with error handling"""
         logging.info(f"connect() called with skip_lock={skip_lock}")
-        
+
         def _connect_internal() -> bool:
             """Internal connection logic with proper cleanup"""
             try:
@@ -120,23 +122,29 @@ class ConnectionManager:
     def reconnect(self, skip_lock: bool = False) -> bool:
         """Attempt to reconnect with exponential backoff and proper synchronization"""
         logging.info(f"reconnect() called with skip_lock={skip_lock}")
-        
+
         def _reconnect_internal() -> bool:
             """Internal reconnection logic with proper state management"""
             # Check if already reconnecting to prevent multiple simultaneous reconnections
             if self.reconnecting:
                 logging.info("Reconnection already in progress, skipping")
                 return False
-            
+
             self.reconnecting = True
             try:
                 attempts = 0
-                while attempts < self.reconnect_attempts and not self.stop_event.is_set():
+                while (
+                    attempts < self.reconnect_attempts and not self.stop_event.is_set()
+                ):
                     attempts += 1
-                    logging.info(f"Reconnection attempt {attempts}/{self.reconnect_attempts}")
+                    logging.info(
+                        f"Reconnection attempt {attempts}/{self.reconnect_attempts}"
+                    )
 
                     logging.info("Calling connect() from reconnect()...")
-                    if self.connect(skip_lock=True):  # Always use skip_lock=True for internal calls
+                    if self.connect(
+                        skip_lock=True
+                    ):  # Always use skip_lock=True for internal calls
                         logging.info("connect() succeeded, reconnection successful")
                         return True
                     else:
@@ -155,7 +163,9 @@ class ConnectionManager:
 
                     # Use interruptible wait instead of time.sleep
                     if self.stop_event.wait(timeout=delay):
-                        logging.info("Shutdown requested during reconnection delay, aborting")
+                        logging.info(
+                            "Shutdown requested during reconnection delay, aborting"
+                        )
                         break
 
                 if self.stop_event.is_set():
@@ -241,12 +251,12 @@ class ConnectionManager:
                 # Always check interface health if we have an interface, regardless of connected state
                 if self.interface and not self.stop_event.is_set():
                     logging.debug("Interface exists, performing health check...")
-                    
+
                     # Prevent overlapping health checks
                     if self.health_check_in_progress:
                         logging.debug("Health check already in progress, skipping")
                         continue
-                    
+
                     self.health_check_in_progress = True
                     try:
                         # Use threading-based timeout for health check

@@ -457,6 +457,11 @@ class MeshtasticMQTTHandler:
         """
         logging.warning(f"Meshtastic disconnect event received: {error}")
 
+        # Log connection info for debugging
+        if hasattr(self, "connection_manager"):
+            conn_info = self.connection_manager.get_connection_info()
+            logging.info(f"Connection info at disconnect: {conn_info}")
+
         # Check for specific error types that indicate connection issues
         if error and any(
             keyword in str(error).lower()
@@ -485,6 +490,12 @@ class MeshtasticMQTTHandler:
             interface: The Meshtastic interface that connected.
         """
         logging.info("Meshtastic connection established.")
+
+        # Log connection info for debugging
+        if hasattr(self, "connection_manager"):
+            conn_info = self.connection_manager.get_connection_info()
+            logging.info(f"Connection info at connect: {conn_info}")
+
         # Update interface references after successful connection
         self._update_interface_references()
 

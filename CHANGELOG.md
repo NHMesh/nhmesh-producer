@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.1...v0.3.0) (2025-08-05)
+
+
+### Features
+
+* optionally listen to a topic and send a message to the mesh whe… ([#28](https://github.com/NHMesh/nhmesh-producer/issues/28)) ([d1cc824](https://github.com/NHMesh/nhmesh-producer/commit/d1cc824c2d5c84ad56e9fa60ec1312e00b868dc3))
+
+
+### Bug Fixes
+
+* **producer:** fix an issue where we would create more than o ne tcp … ([#29](https://github.com/NHMesh/nhmesh-producer/issues/29)) ([b4b8886](https://github.com/NHMesh/nhmesh-producer/commit/b4b88868bdd3ba5d82f9c6c5db8616858d0d843f))
+* **producer:** now includes a last packet seen timer ([#27](https://github.com/NHMesh/nhmesh-producer/issues/27)) ([3838a70](https://github.com/NHMesh/nhmesh-producer/commit/3838a70ca5dcea03d554af8e493f649aed7d48d6))
+
 ## [0.2.2](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.1...v0.2.2) (2025-01-15)
 
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.3.0...v0.4.0) (2025-08-06)
+
+
+### Features
+
+* optionally listen to a topic and send a message to the mesh whe… ([#28](https://github.com/NHMesh/nhmesh-producer/issues/28)) ([d1cc824](https://github.com/NHMesh/nhmesh-producer/commit/d1cc824c2d5c84ad56e9fa60ec1312e00b868dc3))
+* **serial:** support serial connections ([#34](https://github.com/NHMesh/nhmesh-producer/issues/34)) ([c421c0c](https://github.com/NHMesh/nhmesh-producer/commit/c421c0c18f5ccb0e69aafca19f5849f1cd6fc516))
+
+
+### Bug Fixes
+
+* **build:** cross compile with buildx ([962a1a3](https://github.com/NHMesh/nhmesh-producer/commit/962a1a3394a14f2c57fd3c1af2eb9308458b5322))
+* **build:** fixes an issue with trying to cross compile macos arm ([1da7515](https://github.com/NHMesh/nhmesh-producer/commit/1da751502e84b1510a6b77169cbc355036536cb3))
+* **healthcheck:** more robust disconnect handler and automatic reconnect - fix: [#2](https://github.com/NHMesh/nhmesh-producer/issues/2) ([#25](https://github.com/NHMesh/nhmesh-producer/issues/25)) ([09559c1](https://github.com/NHMesh/nhmesh-producer/commit/09559c1aaf2f6e0be5f0fe088dd467aac0e5cccd))
+* **producer:** fix an issue where we would create more than o ne tcp … ([#29](https://github.com/NHMesh/nhmesh-producer/issues/29)) ([b4b8886](https://github.com/NHMesh/nhmesh-producer/commit/b4b88868bdd3ba5d82f9c6c5db8616858d0d843f))
+* **producer:** now includes a last packet seen timer ([#27](https://github.com/NHMesh/nhmesh-producer/issues/27)) ([3838a70](https://github.com/NHMesh/nhmesh-producer/commit/3838a70ca5dcea03d554af8e493f649aed7d48d6))
+
 ## [0.3.0](https://github.com/NHMesh/nhmesh-producer/compare/v0.2.1...v0.3.0) (2025-08-05)
 
 

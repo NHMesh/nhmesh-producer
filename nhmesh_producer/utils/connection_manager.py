@@ -143,7 +143,7 @@ class ConnectionManager:
                 # Always close existing interface first
                 self._close_interface_safely()
 
-                if self.connection_type == "tcp":
+                if self.connection_type == "tcp" and self.node_ip:
                     logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
                     self.interface = meshtastic.tcp_interface.TCPInterface(
                         hostname=self.node_ip

@@ -36,7 +36,9 @@ docker run -d \
 | `MQTT_PORT`                   | `1883`                       | MQTT broker port                                                      |
 | `MQTT_USERNAME`               | -                            | MQTT username for authentication                                      |
 | `MQTT_PASSWORD`               | -                            | MQTT password for authentication                                      |
-| `NODE_IP`                     | -                            | IP address of the Meshtastic node to connect to                       |
+| `NODE_IP`                     | -                            | IP address of the Meshtastic node to connect to (TCP connections)     |
+| `SERIAL_PORT`                 | -                            | Serial port for direct USB connection (serial connections)            |
+| `CONNECTION_TYPE`             | `tcp`                        | Connection type: `tcp` or `serial`                                    |
 | `MQTT_TOPIC`                  | `msh/US/NH/`                 | Root MQTT topic for publishing messages                               |
 | `TRACEROUTE_COOLDOWN`         | `180`                        | Minimum time between any traceroute operations in seconds (3 minutes) |
 | `TRACEROUTE_INTERVAL`         | `43200`                      | Interval between periodic traceroutes in seconds (12 hours)           |
@@ -46,6 +48,8 @@ docker run -d \
 | `MQTT_LISTEN_TOPIC`           | -                            | MQTT topic to listen for incoming messages to send via Meshtastic     |
 
 ### Command Line Options
+
+#### TCP Connection (Default)
 
 ```bash
 python -m nhmesh_producer.producer \
@@ -58,6 +62,20 @@ python -m nhmesh_producer.producer \
     --mqtt-listen-topic msh/US/NH/send
 ```
 
+#### Serial Connection
+
+```bash
+python -m nhmesh_producer.producer \
+    --broker mqtt.nhmesh.live \
+    --port 1883 \
+    --topic msh/US/NH/ \
+    --username your_username \
+    --password your_password \
+    --connection-type serial \
+    --serial-port /dev/ttyUSB0 \
+    --mqtt-listen-topic msh/US/NH/send
+```
+
 ## Features
 
 ### 🔄 **Automatic Reconnection**
@@ -66,6 +84,13 @@ python -m nhmesh_producer.producer \
 - Continuous health monitoring in background thread
 - Thread-safe operations with proper locking
 - Graceful resource cleanup on shutdown
+
+### 🔌 **Dual Connection Support**
+
+- **TCP Connection**: Connect to Meshtastic nodes over the network
+- **Serial Connection**: Direct USB connection to Meshtastic devices
+- Automatic connection type detection and validation
+- Seamless switching between connection types
 
 ### 🛡️ **Enhanced Error Handling**
 

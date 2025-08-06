@@ -65,7 +65,9 @@ class MeshtasticMQTTHandler:
         tls: bool,
         username: str | None,
         password: str | None,
-        node_ip: str,
+        node_ip: str | None = None,
+        serial_port: str | None = None,
+        connection_type: str = "tcp",  # "tcp" or "serial"
         traceroute_cooldown: int = 180,
         traceroute_interval: int = 43200,
         traceroute_max_retries: int = 3,
@@ -83,10 +85,25 @@ class MeshtasticMQTTHandler:
         self.username = username
         self.password = password
         self.node_ip = node_ip
+        self.serial_port = serial_port
+        self.connection_type = connection_type
         self.mqtt_listen_topic = mqtt_listen_topic
 
-        # Initialize connection manager
-        self.connection_manager = ConnectionManager(node_ip)
+        # Initialize connection manager with appropriate parameters
+        if self.connection_type == "tcp":
+            if not self.node_ip:
+                raise ValueError("node_ip is required for TCP connections")
+            self.connection_manager = ConnectionManager(
+                node_ip=self.node_ip, connection_type=self.connection_type
+            )
+        elif self.connection_type == "serial":
+            if not self.serial_port:
+                raise ValueError("serial_port is required for serial connections")
+            self.connection_manager = ConnectionManager(
+                serial_port=self.serial_port, connection_type=self.connection_type
+            )
+        else:
+            raise ValueError("connection_type must be 'tcp' or 'serial'")
 
         # Get interface and check if it's available
         interface = self.connection_manager.get_interface()
@@ -578,7 +595,26 @@ if __name__ == "__main__":
         "--password", action=EnvDefault, envvar="MQTT_PASSWORD", help="MQTT password"
     )
     parser.add_argument(
-        "--node-ip", action=EnvDefault, envvar="NODE_IP", help="Node IP address"
+        "--node-ip",
+        action=EnvDefault,
+        envvar="NODE_IP",
+        required=False,
+        help="Node IP address (required for TCP connections)",
+    )
+    parser.add_argument(
+        "--serial-port",
+        action=EnvDefault,
+        envvar="SERIAL_PORT",
+        required=False,
+        help="Serial port for Meshtastic (required for serial connections)",
+    )
+    parser.add_argument(
+        "--connection-type",
+        default="tcp",
+        choices=["tcp", "serial"],
+        action=EnvDefault,
+        envvar="CONNECTION_TYPE",
+        help="Connection type for Meshtastic (tcp or serial)",
     )
     parser.add_argument(
         "--traceroute-cooldown",
@@ -636,6 +672,8 @@ if __name__ == "__main__":
             args.username,
             args.password,
             args.node_ip,
+            args.serial_port,
+            args.connection_type,
             args.traceroute_cooldown,
             args.traceroute_interval,
             args.traceroute_max_retries,

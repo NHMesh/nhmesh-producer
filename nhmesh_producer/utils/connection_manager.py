@@ -9,6 +9,7 @@ from typing import Any
 
 import meshtastic
 import meshtastic.tcp_interface
+import meshtastic.serial_interface
 
 
 class ConnectionManager:
@@ -16,13 +17,17 @@ class ConnectionManager:
 
     def __init__(
         self,
-        node_ip: str,
+        node_ip: str | None = None,
+        serial_port: str | None = None,
+        connection_type: str = "tcp",  # "tcp" or "serial"
         reconnect_attempts: int = 5,
         reconnect_delay: int = 5,
         health_check_interval: int = 10,  # Back to 10 seconds since events handle immediate detection
         packet_timeout: int = 60,  # Reconnect if no packets received for 60 seconds
     ) -> None:
         self.node_ip = node_ip
+        self.serial_port = serial_port
+        self.connection_type = connection_type.lower()
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay = reconnect_delay
         self.health_check_interval = health_check_interval
@@ -48,6 +53,14 @@ class ConnectionManager:
         self.last_connection_time = 0  # Track when we last connected
         self.min_connection_time = 30  # Minimum time between connections (30 seconds)
 
+        # Validate connection parameters
+        if self.connection_type == "tcp" and not self.node_ip:
+            raise ValueError("node_ip is required for TCP connections")
+        elif self.connection_type == "serial" and not self.serial_port:
+            raise ValueError("serial_port is required for serial connections")
+        elif self.connection_type not in ["tcp", "serial"]:
+            raise ValueError("connection_type must be 'tcp' or 'serial'")
+
         # Start health monitoring thread
         self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
         self.health_thread.start()
@@ -65,7 +78,7 @@ class ConnectionManager:
         if self.interface:
             try:
                 logging.info("Closing existing interface...")
-                # Close the underlying socket first if it exists
+                # Close the underlying socket first if it exists (for TCP)
                 if hasattr(self.interface, "socket") and self.interface.socket:
                     try:
                         logging.debug(f"Closing socket: {self.interface.socket}")
@@ -87,7 +100,7 @@ class ConnectionManager:
         """Check if there are existing connections that should be cleaned up"""
         if self.interface:
             try:
-                # Check if the interface has a valid socket
+                # For TCP interfaces, check if the interface has a valid socket
                 if hasattr(self.interface, "socket") and self.interface.socket:
                     # Try to get socket info to see if it's still valid
                     try:
@@ -100,9 +113,8 @@ class ConnectionManager:
                         )
                         return False
                 else:
-                    logging.warning(
-                        "Interface exists but has no socket, will be cleaned up"
-                    )
+                    # For serial interfaces, just check if interface exists
+                    logging.debug("Interface exists, will be cleaned up")
                     return False
             except Exception as e:
                 logging.warning(f"Error checking existing connections: {e}")
@@ -131,20 +143,28 @@ class ConnectionManager:
                 # Always close existing interface first
                 self._close_interface_safely()
 
-                logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
-                self.interface = meshtastic.tcp_interface.TCPInterface(
-                    hostname=self.node_ip
-                )
-                logging.info(f"TCPInterface created successfully: {self.interface}")
+                if self.connection_type == "tcp":
+                    logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
+                    self.interface = meshtastic.tcp_interface.TCPInterface(
+                        hostname=self.node_ip
+                    )
+                    logging.info(f"TCPInterface created successfully: {self.interface}")
 
-                # Log socket information for debugging
-                if hasattr(self.interface, "socket") and self.interface.socket:
-                    logging.debug(f"Socket created: {self.interface.socket}")
-                    try:
-                        socket_info = self.interface.socket.getsockname()
-                        logging.debug(f"Socket local address: {socket_info}")
-                    except Exception as e:
-                        logging.debug(f"Could not get socket info: {e}")
+                    # Log socket information for debugging
+                    if hasattr(self.interface, "socket") and self.interface.socket:
+                        logging.debug(f"Socket created: {self.interface.socket}")
+                        try:
+                            socket_info = self.interface.socket.getsockname()
+                            logging.debug(f"Socket local address: {socket_info}")
+                        except Exception as e:
+                            logging.debug(f"Could not get socket info: {e}")
+
+                elif self.connection_type == "serial":
+                    logging.info(f"Connecting to Meshtastic node via serial at {self.serial_port}")
+                    self.interface = meshtastic.serial_interface.SerialInterface(
+                        self.serial_port, debugOut=False
+                    )
+                    logging.info(f"SerialInterface created successfully: {self.interface}")
 
                 # Test connection by getting node info
                 logging.info("Testing connection by calling getMyNodeInfo()...")
@@ -175,6 +195,8 @@ class ConnectionManager:
                         "broken pipe",
                         "connection reset",
                         "connection refused",
+                        "serial",
+                        "timeout",
                     ]
                 ):
                     logging.warning(
@@ -516,6 +538,8 @@ class ConnectionManager:
         with self.lock:
             info = {
                 "node_ip": self.node_ip,
+                "serial_port": self.serial_port,
+                "connection_type": self.connection_type,
                 "connected": self.connected,
                 "interface_exists": self.interface is not None,
                 "connected_node_id": self.connected_node_id,
@@ -537,6 +561,8 @@ class ConnectionManager:
                     info["socket_fileno"] = socket.fileno()
                 except Exception as e:
                     info["socket_error"] = str(e)
+            elif self.interface and hasattr(self.interface, "port"):
+                info["serial_port"] = self.interface.port
 
             return info
 

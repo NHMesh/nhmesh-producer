@@ -160,11 +160,15 @@ class ConnectionManager:
                             logging.debug(f"Could not get socket info: {e}")
 
                 elif self.connection_type == "serial":
-                    logging.info(f"Connecting to Meshtastic node via serial at {self.serial_port}")
+                    logging.info(
+                        f"Connecting to Meshtastic node via serial at {self.serial_port}"
+                    )
                     self.interface = meshtastic.serial_interface.SerialInterface(
                         self.serial_port, debugOut=False
                     )
-                    logging.info(f"SerialInterface created successfully: {self.interface}")
+                    logging.info(
+                        f"SerialInterface created successfully: {self.interface}"
+                    )
 
                 # Test connection by getting node info
                 logging.info("Testing connection by calling getMyNodeInfo()...")

@@ -94,15 +94,13 @@ class MeshtasticMQTTHandler:
             if not self.node_ip:
                 raise ValueError("node_ip is required for TCP connections")
             self.connection_manager = ConnectionManager(
-                node_ip=self.node_ip,
-                connection_type=self.connection_type
+                node_ip=self.node_ip, connection_type=self.connection_type
             )
         elif self.connection_type == "serial":
             if not self.serial_port:
                 raise ValueError("serial_port is required for serial connections")
             self.connection_manager = ConnectionManager(
-                serial_port=self.serial_port,
-                connection_type=self.connection_type
+                serial_port=self.serial_port, connection_type=self.connection_type
             )
         else:
             raise ValueError("connection_type must be 'tcp' or 'serial'")
@@ -597,10 +595,18 @@ if __name__ == "__main__":
         "--password", action=EnvDefault, envvar="MQTT_PASSWORD", help="MQTT password"
     )
     parser.add_argument(
-        "--node-ip", action=EnvDefault, envvar="NODE_IP", required=False, help="Node IP address (required for TCP connections)"
+        "--node-ip",
+        action=EnvDefault,
+        envvar="NODE_IP",
+        required=False,
+        help="Node IP address (required for TCP connections)",
     )
     parser.add_argument(
-        "--serial-port", action=EnvDefault, envvar="SERIAL_PORT", required=False, help="Serial port for Meshtastic (required for serial connections)"
+        "--serial-port",
+        action=EnvDefault,
+        envvar="SERIAL_PORT",
+        required=False,
+        help="Serial port for Meshtastic (required for serial connections)",
     )
     parser.add_argument(
         "--connection-type",

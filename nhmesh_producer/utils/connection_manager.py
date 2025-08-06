@@ -8,8 +8,8 @@ import time
 from typing import Any
 
 import meshtastic
-import meshtastic.tcp_interface
 import meshtastic.serial_interface
+import meshtastic.tcp_interface
 
 
 class ConnectionManager:

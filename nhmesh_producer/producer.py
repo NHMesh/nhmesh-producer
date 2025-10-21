@@ -27,6 +27,7 @@ from nhmesh_producer.utils.connection_manager import ConnectionManager
 from nhmesh_producer.utils.envdefault import EnvDefault
 from nhmesh_producer.utils.node_cache import NodeCache
 from nhmesh_producer.utils.traceroute_manager import TracerouteManager
+from nhmesh_producer.web_interface import WebInterface
 
 logging.basicConfig(
     level=environ.get("LOG_LEVEL", "INFO").upper(),
@@ -74,6 +75,9 @@ class MeshtasticMQTTHandler:
         traceroute_max_backoff: int = 86400,
         traceroute_persistence_file: str = "/tmp/traceroute_state.json",
         mqtt_listen_topic: str | None = None,
+        web_interface_enabled: bool = True,
+        web_host: str = "0.0.0.0",
+        web_port: int = 5001,
     ) -> None:
         """
         Initializes the MeshtasticMQTTHandler with improved connection management.
@@ -88,6 +92,10 @@ class MeshtasticMQTTHandler:
         self.serial_port = serial_port
         self.connection_type = connection_type
         self.mqtt_listen_topic = mqtt_listen_topic
+        self.web_interface_enabled = web_interface_enabled
+        self.web_host = web_host
+        self.web_port = web_port
+        self.web_interface: WebInterface | None = None
 
         # Initialize connection manager with appropriate parameters
         if self.connection_type == "tcp":
@@ -187,6 +195,18 @@ class MeshtasticMQTTHandler:
         pub.subscribe(self.onConnect, "meshtastic.connection.established")  # type: ignore
         pub.subscribe(self.onConnect, "meshtastic.connected")  # type: ignore
 
+        # Initialize web interface if enabled
+        if self.web_interface_enabled:
+            try:
+                self.web_interface = WebInterface(self, self.web_host, self.web_port)
+                self.web_interface.start()
+                logging.info(
+                    f"Web interface enabled at http://{self.web_host}:{self.web_port}"
+                )
+            except Exception as e:
+                logging.error(f"Failed to start web interface: {e}")
+                logging.warning("Continuing without web interface...")
+
         # Register cleanup handlers
         atexit.register(self.cleanup)
 
@@ -212,9 +232,32 @@ class MeshtasticMQTTHandler:
             logging.error(f"Failed to connect to MQTT broker: {rc}")
 
     def _on_mqtt_disconnect(self, client: Any, userdata: Any, rc: int) -> None:
-        """Callback for MQTT disconnection"""
+        """Callback for MQTT disconnection with automatic reconnection"""
         self.mqtt_connected = False
-        logging.warning(f"Disconnected from MQTT broker: {rc}")
+        if rc != 0:
+            # Unexpected disconnect
+            logging.warning(f"Unexpected disconnect from MQTT broker (code: {rc}), will auto-reconnect")
+            self.mqtt_reconnect_attempts += 1
+            
+            if self.mqtt_reconnect_attempts <= self.max_mqtt_reconnect_attempts:
+                # Schedule reconnection in background
+                def reconnect_mqtt():
+                    delay = min(5 * (2 ** (self.mqtt_reconnect_attempts - 1)), 60)  # Exponential backoff, max 60s
+                    logging.info(f"Attempting MQTT reconnection in {delay}s (attempt {self.mqtt_reconnect_attempts}/{self.max_mqtt_reconnect_attempts})")
+                    time.sleep(delay)
+                    if not self._shutdown_event.is_set():
+                        try:
+                            client.reconnect()
+                            logging.info("MQTT reconnection successful")
+                        except Exception as e:
+                            logging.error(f"MQTT reconnection failed: {e}")
+                
+                threading.Thread(target=reconnect_mqtt, daemon=True).start()
+            else:
+                logging.error(f"Max MQTT reconnection attempts ({self.max_mqtt_reconnect_attempts}) reached")
+        else:
+            # Clean disconnect
+            logging.info("Cleanly disconnected from MQTT broker")
 
     def _on_mqtt_publish(self, client: Any, userdata: Any, mid: int) -> None:
         """Callback for MQTT publish"""
@@ -357,9 +400,24 @@ class MeshtasticMQTTHandler:
                 # Update interface references after reconnection
                 self._update_interface_references()
 
-            # Connect to MQTT broker
-            self.mqtt_client.connect(self.broker, self.port, 60)
-            self.mqtt_client.loop_start()  # Start background loop
+            # Connect to MQTT broker with retry logic
+            mqtt_connected = False
+            mqtt_attempts = 0
+            while not mqtt_connected and mqtt_attempts < 3:
+                try:
+                    mqtt_attempts += 1
+                    logging.info(f"Connecting to MQTT broker (attempt {mqtt_attempts}/3)...")
+                    self.mqtt_client.connect(self.broker, self.port, 60)
+                    self.mqtt_client.loop_start()  # Start background loop
+                    mqtt_connected = True
+                    logging.info("MQTT broker connection established")
+                except Exception as e:
+                    logging.error(f"MQTT connection attempt {mqtt_attempts} failed: {e}")
+                    if mqtt_attempts < 3:
+                        time.sleep(5)
+            
+            if not mqtt_connected:
+                raise Exception("Failed to connect to MQTT broker after 3 attempts")
 
             # Keep main thread alive but interruptible
             logging.info("Starting main loop, waiting for shutdown signal...")
@@ -533,6 +591,10 @@ class MeshtasticMQTTHandler:
 
         # Publish the JSON payload to the specified topic
         self.mqtt_client.publish(topic_node, payload_json)
+        
+        # Update web interface packet counter if available
+        if self.web_interface:
+            self.web_interface.increment_packet_count()
 
 
 if __name__ == "__main__":
@@ -661,6 +723,29 @@ if __name__ == "__main__":
         envvar="MQTT_LISTEN_TOPIC",
         help="MQTT topic to listen for incoming messages to send via Meshtastic",
     )
+    parser.add_argument(
+        "--web-interface-enabled",
+        type=bool,
+        default=True,
+        action=EnvDefault,
+        envvar="WEB_INTERFACE_ENABLED",
+        help="Enable web interface for monitoring (default: true)",
+    )
+    parser.add_argument(
+        "--web-host",
+        default="0.0.0.0",
+        action=EnvDefault,
+        envvar="WEB_HOST",
+        help="Web interface host (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=5001,
+        action=EnvDefault,
+        envvar="WEB_PORT",
+        help="Web interface port (default: 5001)",
+    )
     args = parser.parse_args()
 
     try:
@@ -680,6 +765,9 @@ if __name__ == "__main__":
             args.traceroute_max_backoff,
             args.traceroute_persistence_file,
             args.mqtt_listen_topic,
+            args.web_interface_enabled,
+            args.web_host,
+            args.web_port,
         )
 
         # Register signal handlers for graceful shutdown AFTER client creation

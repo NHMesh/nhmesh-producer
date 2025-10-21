@@ -11,7 +11,8 @@ dependencies = [
     "paho-mqtt>=2.1.0,<3.0.0",
     "meshtastic>=2.6.4,<3.0.0",
     "protobuf>=4.21.12",
-    "pypubsub>=4.0.3"
+    "pypubsub>=4.0.3",
+    "flask>=3.0.0,<4.0.0"
 ]
 
 [project.optional-dependencies]

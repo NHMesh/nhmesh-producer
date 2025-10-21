@@ -28,7 +28,8 @@ RUN apk add --no-cache \
     musl-dev \
     python3-dev \
     libffi-dev \
-    openssl-dev
+    openssl-dev \
+    curl
 
 # Install poetry
 RUN pip install --no-cache-dir poetry

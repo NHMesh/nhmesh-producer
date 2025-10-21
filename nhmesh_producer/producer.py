@@ -479,6 +479,21 @@ class MeshtasticMQTTHandler:
             conn_info = self.connection_manager.get_connection_info()
             logging.info(f"Connection info at disconnect: {conn_info}")
 
+        # Ignore spurious disconnect events that happen immediately after connection
+        # This prevents reconnection loops where the library emits disconnect events
+        # right after successful connection
+        if hasattr(self, "connection_manager"):
+            import time
+            time_since_connection = time.time() - self.connection_manager.last_connection_time
+            
+            # If we just connected within the last 5 seconds and there's no serious error,
+            # this is likely a spurious disconnect event - ignore it
+            if time_since_connection < 5 and not error:
+                logging.info(
+                    f"Ignoring spurious disconnect event {time_since_connection:.1f}s after connection"
+                )
+                return
+
         # Check for specific error types that indicate connection issues
         if error and any(
             keyword in str(error).lower()

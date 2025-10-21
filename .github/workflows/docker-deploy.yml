@@ -1,6 +1,9 @@
 name: Build and Publish Docker Image to GHCR.io
 
 on:
+  push:
+    branches:
+      - main
   release:
     types:
       - published
@@ -167,3 +170,87 @@ jobs:
               });
               console.log('Created new Docker comment');
             }
+
+  deploy-to-raspberry-pi:
+    name: Deploy to Raspberry Pi
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Deploy to Raspberry Pi via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USERNAME }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: 22
+          script: |
+            echo "🚀 Deploying nhmesh-producer containers..."
+            echo ""
+            
+            # Find all nhmesh-producer containers
+            CONTAINERS=$(docker ps --filter "name=nhmesh-producer" --format "{{.Names}}")
+            
+            if [ -z "$CONTAINERS" ]; then
+              echo "❌ No nhmesh-producer containers found!"
+              exit 1
+            fi
+            
+            echo "📦 Found containers:"
+            echo "$CONTAINERS"
+            echo ""
+            
+            # Process each container
+            for container in $CONTAINERS; do
+              echo "🔄 Updating $container..."
+              
+              # Get the current image
+              IMAGE=$(docker inspect $container --format='{{.Config.Image}}')
+              echo "  Current image: $IMAGE"
+              
+              # Pull latest version
+              echo "  Pulling latest image..."
+              sudo docker pull $IMAGE
+              
+              # Stop and remove the old container
+              echo "  Stopping container..."
+              sudo docker stop $container
+              
+              echo "  Removing old container..."
+              sudo docker rm $container
+              
+              # Get the container configuration for recreation
+              # Since these are Portainer-managed, we'll use docker run with the same config
+              echo "  Recreating container from Portainer stack..."
+              
+              # Use docker-compose from Portainer's directory
+              COMPOSE_DIR=$(docker inspect $container --format='{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || echo "")
+              
+              if [ -n "$COMPOSE_DIR" ] && [ -d "$COMPOSE_DIR" ]; then
+                echo "  Found Portainer compose directory: $COMPOSE_DIR"
+                cd "$COMPOSE_DIR"
+                sudo docker-compose up -d
+              else
+                echo "  ⚠️  Could not find compose directory, container may need manual restart via Portainer"
+              fi
+              
+              echo "  ✅ $container updated"
+              echo ""
+            done
+            
+            echo "✅ Deployment complete!"
+            echo ""
+            echo "📊 Final container status:"
+            docker ps --filter "name=nhmesh-producer" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" || true
+            echo ""
+            
+            # Wait a moment for healthchecks
+            echo "⏳ Waiting 10 seconds for containers to stabilize..."
+            sleep 10
+            
+            echo "🏥 Health status:"
+            for container in $CONTAINERS; do
+              HEALTH=$(docker inspect $container --format='{{.State.Health.Status}}' 2>/dev/null || echo "no healthcheck")
+              echo "  $container: $HEALTH"
+            done

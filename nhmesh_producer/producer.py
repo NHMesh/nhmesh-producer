@@ -393,12 +393,13 @@ class MeshtasticMQTTHandler:
         Connection to Meshtastic is managed by ConnectionManager with automatic reconnection.
         """
         try:
-            # Ensure Meshtastic connection is established
+            # Meshtastic connection is already established in __init__
+            # Just verify it's still connected (don't force reconnect)
             if not self.connection_manager.is_connected():
-                if not self.connection_manager.reconnect():
-                    raise Exception("Failed to establish Meshtastic connection")
-                # Update interface references after reconnection
-                self._update_interface_references()
+                logging.warning("Meshtastic not connected - this is unexpected, connection was established in __init__")
+                logging.info("Will rely on health monitor to reconnect automatically")
+                # Don't call reconnect() here - it would close the working connection!
+                # The health monitor thread will handle reconnection if needed
 
             # Connect to MQTT broker with retry logic
             mqtt_connected = False

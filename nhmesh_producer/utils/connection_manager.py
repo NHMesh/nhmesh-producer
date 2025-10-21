@@ -61,9 +61,9 @@ class ConnectionManager:
         elif self.connection_type not in ["tcp", "serial"]:
             raise ValueError("connection_type must be 'tcp' or 'serial'")
 
-        # Start health monitoring thread
-        self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
-        self.health_thread.start()
+        # Don't start health monitoring until after initial connection
+        # It will be started by start_health_monitor() after first connect()
+        self.health_thread: threading.Thread | None = None
 
     def packet_received(self) -> None:
         """Call this method when a packet is received to update the last packet time"""
@@ -189,6 +189,13 @@ class ConnectionManager:
                 )  # Update last connection time on successful connection
 
                 logging.info(f"Successfully connected to node {self.connected_node_id}")
+                
+                # Start health monitor after first successful connection
+                if self.health_thread is None or not self.health_thread.is_alive():
+                    logging.info("Starting health monitor thread...")
+                    self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
+                    self.health_thread.start()
+                
                 return True
 
             except Exception as e:

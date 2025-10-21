@@ -721,7 +721,9 @@ if __name__ == "__main__":
         "--mqtt-listen-topic",
         action=EnvDefault,
         envvar="MQTT_LISTEN_TOPIC",
-        help="MQTT topic to listen for incoming messages to send via Meshtastic",
+        default=None,
+        required=False,
+        help="MQTT topic to listen for incoming messages to send via Meshtastic (optional)",
     )
     parser.add_argument(
         "--web-interface-enabled",

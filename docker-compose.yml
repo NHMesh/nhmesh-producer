@@ -33,7 +33,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s  # Increased to allow Meshtastic connection time
+      start_period: 60s # Increased to allow Meshtastic connection time
 
   # Optional: Add a simple MQTT broker for testing
   mqtt-broker:

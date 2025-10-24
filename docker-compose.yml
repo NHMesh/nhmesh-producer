@@ -17,6 +17,7 @@ services:
       - MQTT_ENDPOINT=${MQTT_ENDPOINT:-mqtt.nhmesh.live}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - MQTT_TOPIC=${MQTT_TOPIC:-msh/US/NH/}
+      - MQTT_LISTEN_TOPIC=${MQTT_LISTEN_TOPIC:-msh/US/NH/#}
       - WEB_HOST=${WEB_HOST:-0.0.0.0}
       - WEB_PORT=${WEB_PORT:-5001}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

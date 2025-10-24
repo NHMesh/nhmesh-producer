@@ -145,7 +145,7 @@ class MeshtasticMQTTHandler:
         self.mqtt_client.on_connect = self._on_mqtt_connect
         self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self.mqtt_client.on_publish = self._on_mqtt_publish
-        self.mqtt_client.on_message = self._on_mqtt_message
+        self. m   .on_message = self._on_mqtt_message
 
         # MQTT connection state
         self.mqtt_connected = False
@@ -722,7 +722,7 @@ if __name__ == "__main__":
         "--mqtt-listen-topic",
         action=EnvDefault,
         envvar="MQTT_LISTEN_TOPIC",
-        default=None,
+        default="msh/US/NH/#",
         required=False,
         help="MQTT topic to listen for incoming messages to send via Meshtastic (optional)",
     )

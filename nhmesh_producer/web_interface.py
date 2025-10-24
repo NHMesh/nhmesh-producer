@@ -312,3 +312,4 @@ class WebInterface:
         """Check if the web interface thread is alive"""
         return self.server_thread is not None and self.server_thread.is_alive()
 
+

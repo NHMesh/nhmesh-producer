@@ -145,7 +145,7 @@ class MeshtasticMQTTHandler:
         self.mqtt_client.on_connect = self._on_mqtt_connect
         self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self.mqtt_client.on_publish = self._on_mqtt_publish
-        self. m   .on_message = self._on_mqtt_message
+        self.mqtt_client.on_message = self._on_mqtt_message
 
         # MQTT connection state
         self.mqtt_connected = False
@@ -309,9 +309,11 @@ class MeshtasticMQTTHandler:
             # Send the message via Meshtastic
             if to_id:
                 # Send to specific node
+                interface.sendText(text, channelIndex=0, destinationId=to_id)
                 interface.sendText(text, channelIndex=1, destinationId=to_id)
             else:
                 # Broadcast message
+                interface.sendText(text, channelIndex=0)
                 interface.sendText(text, channelIndex=1)
 
             logging.info("Message sent successfully via Meshtastic")

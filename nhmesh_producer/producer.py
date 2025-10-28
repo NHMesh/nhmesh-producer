@@ -722,7 +722,7 @@ if __name__ == "__main__":
         "--mqtt-listen-topic",
         action=EnvDefault,
         envvar="MQTT_LISTEN_TOPIC",
-        default="msh/US/NH/#",
+        default="msh/US/NH/send",
         required=False,
         help="MQTT topic to listen for incoming messages to send via Meshtastic (optional)",
     )

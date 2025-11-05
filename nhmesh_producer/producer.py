@@ -284,6 +284,13 @@ class MeshtasticMQTTHandler:
             # Send the message via Meshtastic
             self._send_message_via_meshtastic(message_data)
 
+            # Additionally, publish a JSON message back to the main MQTT topic
+            # so nhmesh-collector ingests it as a regular text message.
+            try:
+                self._publish_sent_text_as_collector_packet(message_data)
+            except Exception as e:
+                logging.error(f"Failed to publish sent-message echo for collector: {e}")
+
         except Exception as e:
             logging.error(f"Error handling MQTT message: {e}")
 
@@ -320,6 +327,56 @@ class MeshtasticMQTTHandler:
 
         except Exception as e:
             logging.error(f"Failed to send message via Meshtastic: {e}")
+
+    def _publish_sent_text_as_collector_packet(self, message_data: dict[str, Any]) -> None:
+        """Publish a JSON envelope representing a text message to the main MQTT topic for collector ingestion.
+
+        The collector accepts either protobuf ServiceEnvelope or a JSON object with the same structure:
+          { packet: { fromId, toId, rxTime, decoded: { portnum: "TEXT_MESSAGE_APP", payload: <text> } }, gatewayId, channelId }
+        We publish to the same topic pattern used for RF-origin packets: f"{rootTopic}/{fromId}".
+        """
+        # Resolve identifiers
+        interface = self.connection_manager.get_interface()
+        gateway_id = None
+        try:
+            if hasattr(self.connection_manager, "connected_node_id") and self.connection_manager.connected_node_id:
+                gateway_id = self.connection_manager.connected_node_id
+            elif interface:
+                node_info = interface.getMyNodeInfo()
+                gateway_id = node_info.get("user", {}).get("id")
+        except Exception:
+            pass
+        if not gateway_id:
+            gateway_id = "unknown"
+
+        text = message_data.get("text", "")
+        to_id = message_data.get("to") or None
+        if not text:
+            logging.debug("No text in message_data for collector echo; skipping")
+            return
+
+        now_ts = int(time.time())
+        packet = {
+            "fromId": gateway_id,
+            "toId": to_id,
+            "rxTime": now_ts,
+            "decoded": {
+                "portnum": "TEXT_MESSAGE_APP",
+                "payload": text,
+            },
+        }
+        envelope = {
+            "packet": packet,
+            "gatewayId": gateway_id,
+            "channelId": self.channel_num,
+        }
+
+        topic_node = f"{self.topic}/{gateway_id}"
+        payload_json = json.dumps(envelope, default=str)
+        logging.info(
+            f"Publishing sent text echo for collector: topic='{topic_node}' from='{gateway_id}' to='{to_id}'"
+        )
+        self.mqtt_client.publish(topic_node, payload_json)
 
     def _update_interface_references(self) -> None:
         """Update interface references in NodeCache and TracerouteManager after reconnection"""

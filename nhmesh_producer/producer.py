@@ -9,6 +9,7 @@ import argparse
 import atexit
 import base64
 import json
+import random
 import logging
 import os
 import signal
@@ -152,6 +153,10 @@ class MeshtasticMQTTHandler:
         self.mqtt_reconnect_attempts = 0
         self.max_mqtt_reconnect_attempts = 5
         self._shutdown_event = threading.Event()  # Thread-safe shutdown signal
+        
+        # Packet ID generation (Meshtastic-like 32-bit counter seeded randomly)
+        self._packet_id_lock = threading.Lock()
+        self._packet_id_counter = random.randint(0, 0x0FFFFFFF)
 
         # Initialize Meshtastic connection
         if not self.connection_manager.connect():
@@ -209,6 +214,16 @@ class MeshtasticMQTTHandler:
 
         # Register cleanup handlers
         atexit.register(self.cleanup)
+
+    def _next_meshtastic_packet_id(self) -> int:
+        """Return next 32-bit packet ID similar to Meshtastic behavior.
+
+        Uses a per-process counter seeded randomly, incrementing and wrapping at 2^32.
+        Thread-safe.
+        """
+        with self._packet_id_lock:
+            self._packet_id_counter = (self._packet_id_counter + 1) & 0xFFFFFFFF
+            return self._packet_id_counter
 
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
         """Callback for MQTT connection"""
@@ -357,6 +372,7 @@ class MeshtasticMQTTHandler:
 
         now_ts = int(time.time())
         packet = {
+            "id": self._next_meshtastic_packet_id(),
             "fromId": gateway_id,
             "toId": to_id,
             "rxTime": now_ts,

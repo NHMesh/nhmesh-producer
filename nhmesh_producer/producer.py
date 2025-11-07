@@ -158,6 +158,11 @@ class MeshtasticMQTTHandler:
         self._packet_id_lock = threading.Lock()
         self._packet_id_counter = random.randint(0, 0x0FFFFFFF)
 
+        # Pending sent messages awaiting self-RF correlation
+        self._pending_lock = threading.Lock()
+        self._pending_sent: dict[tuple[str, str | None], float] = {}
+        self._pending_timeout_sec = 2.0
+
         # Initialize Meshtastic connection
         if not self.connection_manager.connect():
             raise Exception("Failed to establish initial Meshtastic connection")
@@ -299,12 +304,12 @@ class MeshtasticMQTTHandler:
             # Send the message via Meshtastic
             self._send_message_via_meshtastic(message_data)
 
-            # Additionally, publish a JSON message back to the main MQTT topic
-            # so nhmesh-collector ingests it as a regular text message.
+            # Record as pending so we can try to adopt the real RF packet id if our
+            # node hears its own transmission shortly after send.
             try:
-                self._publish_sent_text_as_collector_packet(message_data)
+                self._record_pending_sent(message_data)
             except Exception as e:
-                logging.error(f"Failed to publish sent-message echo for collector: {e}")
+                logging.error(f"Failed to record pending sent message: {e}")
 
         except Exception as e:
             logging.error(f"Error handling MQTT message: {e}")
@@ -342,6 +347,45 @@ class MeshtasticMQTTHandler:
 
         except Exception as e:
             logging.error(f"Failed to send message via Meshtastic: {e}")
+
+    def _record_pending_sent(self, message_data: dict[str, Any]) -> None:
+        """Record a pending sent message to correlate with a self-heard RF packet.
+
+        Falls back to publishing an echo with local packet id if not matched
+        within a short timeout.
+        """
+        text = message_data.get("text", "")
+        to_id = message_data.get("to") or None
+        if not text:
+            return
+
+        key = (text, to_id)
+        with self._pending_lock:
+            self._pending_sent[key] = time.time()
+
+        # Start a one-shot timer to publish fallback echo if not matched in time
+        def _fallback_publish() -> None:
+            try:
+                with self._pending_lock:
+                    ts = self._pending_sent.get(key)
+                    if ts is None:
+                        return  # already matched and published
+                    if (time.time() - ts) < self._pending_timeout_sec:
+                        return  # another timer likely exists; avoid early publish
+                    # Not matched in time; remove and publish fallback
+                    self._pending_sent.pop(key, None)
+            except Exception:
+                # On any lock error, still attempt to publish fallback
+                pass
+
+            try:
+                self._publish_sent_text_as_collector_packet(message_data)
+            except Exception as e:
+                logging.error(f"Failed to publish fallback echo for collector: {e}")
+
+        t = threading.Timer(self._pending_timeout_sec, _fallback_publish)
+        t.daemon = True
+        t.start()
 
     def _publish_sent_text_as_collector_packet(self, message_data: dict[str, Any]) -> None:
         """Publish a JSON envelope representing a text message to the main MQTT topic for collector ingestion.
@@ -570,6 +614,12 @@ class MeshtasticMQTTHandler:
 
         self._update_cache_from_packet(packet_dict)
 
+        # Try to correlate self-sent text packets to adopt the real RF packet id
+        try:
+            self._try_match_and_publish_echo_from_rf(packet_dict)
+        except Exception as e:
+            logging.debug(f"Self-RF correlation check failed: {e}")
+
         out_packet: dict[str, Any] = {}
         for field_descriptor, field_value in packet_dict.items():
             out_packet[field_descriptor] = field_value
@@ -598,6 +648,98 @@ class MeshtasticMQTTHandler:
         out_packet["channel_num"] = self.channel_num
 
         self.publish_dict_to_mqtt(out_packet)
+
+    def _extract_text_from_decoded(self, decoded: dict[str, Any]) -> str | None:
+        """Best-effort extract of text content from a decoded payload."""
+        try:
+            if not isinstance(decoded, dict):
+                return None
+            port = decoded.get("portnum") or decoded.get("port_num")
+            if port != "TEXT_MESSAGE_APP":
+                return None
+            payload = decoded.get("payload")
+            if payload is None:
+                return None
+            # Payload may be already text or base64-encoded
+            if isinstance(payload, str):
+                # Try base64 decode; if it fails, assume it's plain text
+                try:
+                    b = base64.b64decode(payload, validate=False)
+                    # If decoding didn’t change content meaningfully, prefer original
+                    txt = b.decode("utf-8")
+                    # Heuristic: if decoded contains many non-printables, fallback
+                    if sum(ch < " " and ch not in "\t\n\r" for ch in txt) > 0:
+                        return payload
+                    return txt
+                except Exception:
+                    return payload
+            return None
+        except Exception:
+            return None
+
+    def _try_match_and_publish_echo_from_rf(self, packet_dict: dict[str, Any]) -> None:
+        """If this RF packet appears to be our own sent text, publish echo with real id.
+
+        We match on fromId == gatewayId, TEXT_MESSAGE_APP, and text/toId matching a pending entry.
+        """
+        interface = self.connection_manager.get_interface()
+        gateway_id = None
+        try:
+            if hasattr(self.connection_manager, "connected_node_id") and self.connection_manager.connected_node_id:
+                gateway_id = self.connection_manager.connected_node_id
+            elif interface:
+                node_info = interface.getMyNodeInfo()
+                gateway_id = node_info.get("user", {}).get("id")
+        except Exception:
+            pass
+        if not gateway_id:
+            return
+
+        from_id = packet_dict.get("fromId")
+        if from_id != gateway_id:
+            return
+
+        decoded = packet_dict.get("decoded", {}) if isinstance(packet_dict, dict) else {}
+        text = self._extract_text_from_decoded(decoded)
+        if not text:
+            return
+
+        to_id = packet_dict.get("toId") or None
+        key = (text, to_id)
+        with self._pending_lock:
+            if key not in self._pending_sent:
+                return
+            # matched; remove so we don’t fallback-publish
+            self._pending_sent.pop(key, None)
+
+        # Build and publish echo envelope using the real RF packet fields
+        try:
+            now_ts = int(time.time())
+            packet_id_val = packet_dict.get("id")
+            rx_time = packet_dict.get("rxTime", now_ts)
+            envelope_packet = {
+                "id": packet_id_val if isinstance(packet_id_val, int) else self._next_meshtastic_packet_id(),
+                "fromId": from_id,
+                "toId": to_id,
+                "rxTime": rx_time,
+                "decoded": {
+                    "portnum": "TEXT_MESSAGE_APP",
+                    "payload": text,
+                },
+            }
+            envelope = {
+                "packet": envelope_packet,
+                "gatewayId": gateway_id,
+                "channelId": self.channel_num,
+            }
+            topic_node = f"{self.topic}/{gateway_id}"
+            payload_json = json.dumps(envelope, default=str)
+            logging.info(
+                f"Publishing matched sent text echo (real id) for collector: topic='{topic_node}' id='{envelope_packet['id']}'"
+            )
+            self.mqtt_client.publish(topic_node, payload_json)
+        except Exception as e:
+            logging.error(f"Failed to publish matched echo for collector: {e}")
 
     def onDisconnect(self, interface: Any, error: str | None = None) -> None:
         """

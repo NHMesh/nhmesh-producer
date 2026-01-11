@@ -415,10 +415,42 @@ class MeshtasticMQTTHandler:
             return
 
         now_ts = int(time.time())
+        # Convert IDs to integers for collector compatibility
+        from_id_int = 0
+        try:
+            if isinstance(gateway_id, str) and gateway_id.startswith("!"):
+                from_id_int = int(gateway_id[1:], 16)
+            elif isinstance(gateway_id, int):
+                from_id_int = gateway_id
+            else:
+                try:
+                    from_id_int = int(gateway_id)
+                except ValueError:
+                    # If completely unknown/invalid, might stay 0 or maybe we shouldn't send?
+                    # But keeping 0 matches "unknown" conceptual behavior if mapping fails
+                    pass
+        except Exception as e:
+            logging.warning(f"Failed to convert gateway_id '{gateway_id}' to int: {e}")
+
+        to_id_int = 4294967295  # Default to Broadcast (0xFFFFFFFF)
+        if to_id:
+            try:
+                if isinstance(to_id, str) and to_id.startswith("!"):
+                    to_id_int = int(to_id[1:], 16)
+                elif isinstance(to_id, int):
+                    to_id_int = to_id
+                else:
+                    try:
+                        to_id_int = int(to_id)
+                    except ValueError:
+                        pass
+            except Exception as e:
+                logging.warning(f"Failed to convert to_id '{to_id}' to int: {e}")
+
         packet = {
             "id": self._next_meshtastic_packet_id(),
-            "fromId": gateway_id,
-            "toId": to_id,
+            "fromId": from_id_int,
+            "toId": to_id_int,
             "rxTime": now_ts,
             "decoded": {
                 "portnum": "TEXT_MESSAGE_APP",

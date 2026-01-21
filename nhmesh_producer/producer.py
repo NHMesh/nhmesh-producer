@@ -782,8 +782,13 @@ class MeshtasticMQTTHandler:
         """
         logging.warning(f"Meshtastic disconnect event received: {error}")
 
-        # Log connection info for debugging
         if hasattr(self, "connection_manager"):
+            # Check if this disconnect event is for the current interface
+            current_interface = self.connection_manager.interface
+            if current_interface is not None and interface != current_interface:
+                logging.debug("Ignoring disconnect event from stale interface")
+                return
+
             conn_info = self.connection_manager.get_connection_info()
             logging.info(f"Connection info at disconnect: {conn_info}")
 

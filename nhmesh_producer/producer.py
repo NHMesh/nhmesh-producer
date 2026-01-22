@@ -137,6 +137,9 @@ class MeshtasticMQTTHandler:
             self.modem_preset = "Unknown"
             self.channel_num = 0
 
+        # Build channel map (retry a few times if empty? or just once)
+        self.channel_map = self.get_channel_map()
+
         # MQTT client setup with callbacks
         self.mqtt_client = mqtt.Client()
         if self.username and self.password:
@@ -229,6 +232,26 @@ class MeshtasticMQTTHandler:
         with self._packet_id_lock:
             self._packet_id_counter = (self._packet_id_counter + 1) & 0xFFFFFFFF
             return self._packet_id_counter
+
+    def get_channel_map(self) -> dict[int, str]:
+        """
+        Builds a map of channel index to channel name from the connected node.
+        """
+        channel_map = {}
+        try:
+            # Check if we have a valid interface and localNode
+            interface = self.connection_manager.get_interface()
+            if interface and interface.localNode and interface.localNode.channels:
+                for channel in interface.localNode.channels:
+                    # channel object typically has 'index' and 'settings'
+                    # We need to access settings.name
+                    if hasattr(channel, 'settings') and channel.settings and hasattr(channel.settings, 'name') and channel.settings.name:
+                        channel_map[channel.index] = channel.settings.name
+            
+            logging.info(f"Built channel map: {channel_map}")
+        except Exception as e:
+            logging.warning(f"Failed to build channel map: {e}")
+        return channel_map
 
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
         """Callback for MQTT connection"""
@@ -677,7 +700,20 @@ class MeshtasticMQTTHandler:
 
         out_packet["source"] = "rf"
         out_packet["modem_preset"] = self.modem_preset
-        out_packet["channel_num"] = self.channel_num
+
+        # Determine correct channel index
+        # Use existing channel from packet if available, otherwise fallback to default
+        channel_idx = packet_dict.get("channel")
+        if channel_idx is None:
+             channel_idx = self.channel_num
+        
+        out_packet["channel_num"] = channel_idx
+
+        # Inject channel name if available
+        if bytes(channel_idx) in self.channel_map: # channel_map keys might be int
+            out_packet["channelName"] = self.channel_map[channel_idx]
+        elif int(channel_idx) in self.channel_map:
+             out_packet["channelName"] = self.channel_map[int(channel_idx)]
 
         self.publish_dict_to_mqtt(out_packet)
 

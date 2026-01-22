@@ -242,11 +242,16 @@ class MeshtasticMQTTHandler:
             # Check if we have a valid interface and localNode
             interface = self.connection_manager.get_interface()
             if interface and interface.localNode and interface.localNode.channels:
-                for channel in interface.localNode.channels:
-                    # channel object typically has 'index' and 'settings'
-                    # We need to access settings.name
-                    if hasattr(channel, 'settings') and channel.settings and hasattr(channel.settings, 'name') and channel.settings.name:
-                        channel_map[channel.index] = channel.settings.name
+                for c in interface.localNode.channels:
+                    # settings.name is the channel name (e.g. "NHMesh", "MediumFast")
+                    # We map the channel index to this name.
+                    # Note: Meshtastic channels are 0-indexed.
+                    if hasattr(c, 'settings') and c.settings and hasattr(c.settings, 'name') and c.settings.name:
+                        channel_map[c.index] = c.settings.name
+                        logging.info(f"Loaded Channel Map: Index {c.index} -> '{c.settings.name}'")
+            
+            if not channel_map:
+                 logging.warning("Channel map is empty! Node might not be fully synced yet.")
             
             logging.info(f"Built channel map: {channel_map}")
         except Exception as e:
@@ -709,11 +714,18 @@ class MeshtasticMQTTHandler:
         
         out_packet["channel_num"] = channel_idx
 
-        # Inject channel name if available
-        if bytes(channel_idx) in self.channel_map: # channel_map keys might be int
-            out_packet["channelName"] = self.channel_map[channel_idx]
-        elif int(channel_idx) in self.channel_map:
-             out_packet["channelName"] = self.channel_map[int(channel_idx)]
+        # Inject channelName if available
+        if channel_idx is not None:
+             # Lazy Refresh: If channel name is missing, try to refresh the map
+             if channel_idx not in self.channel_map:
+                 logging.info(f"Channel Index {channel_idx} not found in map. Refreshing map...")
+                 self.channel_map = self.get_channel_map()
+                 
+             if channel_idx in self.channel_map:
+                 out_packet["channelName"] = self.channel_map[channel_idx]
+                 logging.debug(f"Injected channelName '{out_packet['channelName']}' for index {channel_idx}")
+             else:
+                 logging.debug(f"No name found for channel index {channel_idx}")
 
         self.publish_dict_to_mqtt(out_packet)
 

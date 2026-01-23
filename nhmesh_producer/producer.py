@@ -252,6 +252,9 @@ class MeshtasticMQTTHandler:
                         if not name and c.index == 0:
                             # Use modem preset as the default name for ch0 if unnamed
                             name = self.modem_preset if hasattr(self, 'modem_preset') else "Primary"
+                        
+                        if not name and c.index == 1:
+                            name = "NHMesh"
                             
                         if name:
                             channel_map[c.index] = name

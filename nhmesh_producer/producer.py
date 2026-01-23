@@ -246,9 +246,16 @@ class MeshtasticMQTTHandler:
                     # settings.name is the channel name (e.g. "NHMesh", "MediumFast")
                     # We map the channel index to this name.
                     # Note: Meshtastic channels are 0-indexed.
-                    if hasattr(c, 'settings') and c.settings and hasattr(c.settings, 'name') and c.settings.name:
-                        channel_map[c.index] = c.settings.name
-                        logging.info(f"Loaded Channel Map: Index {c.index} -> '{c.settings.name}'")
+                    if hasattr(c, 'settings') and c.settings:
+                        name = c.settings.name
+                        # Handle empty name for primary channel (common default)
+                        if not name and c.index == 0:
+                            # Use modem preset as the default name for ch0 if unnamed
+                            name = self.modem_preset if hasattr(self, 'modem_preset') else "Primary"
+                            
+                        if name:
+                            channel_map[c.index] = name
+                            logging.info(f"Loaded Channel Map: Index {c.index} -> '{name}'")
             
             if not channel_map:
                  logging.warning("Channel map is empty! Node might not be fully synced yet.")

@@ -74,7 +74,7 @@ jobs:
 
       - name: Add Docker image info to release
         if: github.event_name == 'release'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const release = context.payload.release;
@@ -112,7 +112,7 @@ jobs:
 
       - name: Add PR comment with Docker info
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const tags = `${{ steps.meta.outputs.tags }}`.split('\n');

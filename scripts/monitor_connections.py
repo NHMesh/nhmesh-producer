@@ -50,13 +50,13 @@ def get_tcp_connections(host: str, port: int = 4403) -> list[dict[str, Any]]:
         return []
 
 
-def monitor_connections(node_ip: str, interval: int = 5):
+def monitor_connections(node_ip: str, node_port: int = 4403, interval: int = 5):
     """Monitor connections and connection manager state"""
-    logging.info(f"Starting connection monitoring for {node_ip}")
+    logging.info(f"Starting connection monitoring for {node_ip}:{node_port}")
     logging.info(f"Monitoring interval: {interval} seconds")
 
     # Create a connection manager for testing
-    cm = ConnectionManager(node_ip)
+    cm = ConnectionManager(node_ip=node_ip, node_port=node_port)
 
     try:
         while True:
@@ -65,8 +65,8 @@ def monitor_connections(node_ip: str, interval: int = 5):
             print("=" * 80)
 
             # Get TCP connections
-            tcp_connections = get_tcp_connections(node_ip)
-            print(f"\nTCP Connections to {node_ip}:4403:")
+            tcp_connections = get_tcp_connections(node_ip, node_port)
+            print(f"\nTCP Connections to {node_ip}:{node_port}:")
             if tcp_connections:
                 for i, conn in enumerate(tcp_connections, 1):
                     print(
@@ -111,9 +111,15 @@ if __name__ == "__main__":
         "--node-ip", default="10.250.1.103", help="Node IP address to monitor"
     )
     parser.add_argument(
+        "--node-port",
+        type=int,
+        default=4403,
+        help="Node port to monitor (default: 4403)",
+    )
+    parser.add_argument(
         "--interval", type=int, default=5, help="Monitoring interval in seconds"
     )
 
     args = parser.parse_args()
 
-    monitor_connections(args.node_ip, args.interval)
+    monitor_connections(args.node_ip, args.node_port, args.interval)

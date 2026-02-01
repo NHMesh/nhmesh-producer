@@ -9,9 +9,9 @@ import argparse
 import atexit
 import base64
 import json
-import random
 import logging
 import os
+import random
 import signal
 import sys
 import threading
@@ -52,6 +52,7 @@ class MeshtasticMQTTHandler:
         username (str): The MQTT username.
         password (str): The MQTT password.
         node_ip (str): The IP address of the Meshtastic node.
+        node_port (int): The port of the Meshtastic node (default: 4403).
         traceroute_cooldown (int): Cooldown between traceroutes in seconds (default: 180).
         traceroute_interval (int): Interval between periodic traceroutes in seconds (default: 43200).
         traceroute_max_retries (int): Maximum retry attempts for failed traceroutes (default: 3).
@@ -68,6 +69,7 @@ class MeshtasticMQTTHandler:
         username: str | None,
         password: str | None,
         node_ip: str | None = None,
+        node_port: int = 4403,
         serial_port: str | None = None,
         connection_type: str = "tcp",  # "tcp" or "serial"
         traceroute_cooldown: int = 180,
@@ -90,6 +92,7 @@ class MeshtasticMQTTHandler:
         self.username = username
         self.password = password
         self.node_ip = node_ip
+        self.node_port = node_port
         self.serial_port = serial_port
         self.connection_type = connection_type
         self.mqtt_listen_topic = mqtt_listen_topic
@@ -103,7 +106,9 @@ class MeshtasticMQTTHandler:
             if not self.node_ip:
                 raise ValueError("node_ip is required for TCP connections")
             self.connection_manager = ConnectionManager(
-                node_ip=self.node_ip, connection_type=self.connection_type
+                node_ip=self.node_ip,
+                node_port=self.node_port,
+                connection_type=self.connection_type,
             )
         elif self.connection_type == "serial":
             if not self.serial_port:
@@ -156,7 +161,7 @@ class MeshtasticMQTTHandler:
         self.mqtt_reconnect_attempts = 0
         self.max_mqtt_reconnect_attempts = 5
         self._shutdown_event = threading.Event()  # Thread-safe shutdown signal
-        
+
         # Packet ID generation (Meshtastic-like 32-bit counter seeded randomly)
         self._packet_id_lock = threading.Lock()
         self._packet_id_counter = random.randint(0, 0x0FFFFFFF)
@@ -246,23 +251,31 @@ class MeshtasticMQTTHandler:
                     # settings.name is the channel name (e.g. "NHMesh", "MediumFast")
                     # We map the channel index to this name.
                     # Note: Meshtastic channels are 0-indexed.
-                    if hasattr(c, 'settings') and c.settings:
+                    if hasattr(c, "settings") and c.settings:
                         name = c.settings.name
                         # Handle empty name for primary channel (common default)
                         if not name and c.index == 0:
                             # Use modem preset as the default name for ch0 if unnamed
-                            name = self.modem_preset if hasattr(self, 'modem_preset') else "Primary"
-                        
+                            name = (
+                                self.modem_preset
+                                if hasattr(self, "modem_preset")
+                                else "Primary"
+                            )
+
                         if not name and c.index == 1:
                             name = "NHMesh"
-                            
+
                         if name:
                             channel_map[c.index] = name
-                            logging.info(f"Loaded Channel Map: Index {c.index} -> '{name}'")
-            
+                            logging.info(
+                                f"Loaded Channel Map: Index {c.index} -> '{name}'"
+                            )
+
             if not channel_map:
-                 logging.warning("Channel map is empty! Node might not be fully synced yet.")
-            
+                logging.warning(
+                    "Channel map is empty! Node might not be fully synced yet."
+                )
+
             logging.info(f"Built channel map: {channel_map}")
         except Exception as e:
             logging.warning(f"Failed to build channel map: {e}")
@@ -294,14 +307,20 @@ class MeshtasticMQTTHandler:
         self.mqtt_connected = False
         if rc != 0:
             # Unexpected disconnect
-            logging.warning(f"Unexpected disconnect from MQTT broker (code: {rc}), will auto-reconnect")
+            logging.warning(
+                f"Unexpected disconnect from MQTT broker (code: {rc}), will auto-reconnect"
+            )
             self.mqtt_reconnect_attempts += 1
-            
+
             if self.mqtt_reconnect_attempts <= self.max_mqtt_reconnect_attempts:
                 # Schedule reconnection in background
                 def reconnect_mqtt():
-                    delay = min(5 * (2 ** (self.mqtt_reconnect_attempts - 1)), 60)  # Exponential backoff, max 60s
-                    logging.info(f"Attempting MQTT reconnection in {delay}s (attempt {self.mqtt_reconnect_attempts}/{self.max_mqtt_reconnect_attempts})")
+                    delay = min(
+                        5 * (2 ** (self.mqtt_reconnect_attempts - 1)), 60
+                    )  # Exponential backoff, max 60s
+                    logging.info(
+                        f"Attempting MQTT reconnection in {delay}s (attempt {self.mqtt_reconnect_attempts}/{self.max_mqtt_reconnect_attempts})"
+                    )
                     time.sleep(delay)
                     if not self._shutdown_event.is_set():
                         try:
@@ -309,10 +328,12 @@ class MeshtasticMQTTHandler:
                             logging.info("MQTT reconnection successful")
                         except Exception as e:
                             logging.error(f"MQTT reconnection failed: {e}")
-                
+
                 threading.Thread(target=reconnect_mqtt, daemon=True).start()
             else:
-                logging.error(f"Max MQTT reconnection attempts ({self.max_mqtt_reconnect_attempts}) reached")
+                logging.error(
+                    f"Max MQTT reconnection attempts ({self.max_mqtt_reconnect_attempts}) reached"
+                )
         else:
             # Clean disconnect
             logging.info("Cleanly disconnected from MQTT broker")
@@ -425,7 +446,9 @@ class MeshtasticMQTTHandler:
         t.daemon = True
         t.start()
 
-    def _publish_sent_text_as_collector_packet(self, message_data: dict[str, Any]) -> None:
+    def _publish_sent_text_as_collector_packet(
+        self, message_data: dict[str, Any]
+    ) -> None:
         """Publish a JSON envelope representing a text message to the main MQTT topic for collector ingestion.
 
         The collector accepts either protobuf ServiceEnvelope or a JSON object with the same structure:
@@ -436,7 +459,10 @@ class MeshtasticMQTTHandler:
         interface = self.connection_manager.get_interface()
         gateway_id = None
         try:
-            if hasattr(self.connection_manager, "connected_node_id") and self.connection_manager.connected_node_id:
+            if (
+                hasattr(self.connection_manager, "connected_node_id")
+                and self.connection_manager.connected_node_id
+            ):
                 gateway_id = self.connection_manager.connected_node_id
             elif interface:
                 node_info = interface.getMyNodeInfo()
@@ -585,7 +611,9 @@ class MeshtasticMQTTHandler:
             # Meshtastic connection is already established in __init__
             # Just verify it's still connected (don't force reconnect)
             if not self.connection_manager.is_connected():
-                logging.warning("Meshtastic not connected - this is unexpected, connection was established in __init__")
+                logging.warning(
+                    "Meshtastic not connected - this is unexpected, connection was established in __init__"
+                )
                 logging.info("Will rely on health monitor to reconnect automatically")
                 # Don't call reconnect() here - it would close the working connection!
                 # The health monitor thread will handle reconnection if needed
@@ -596,16 +624,20 @@ class MeshtasticMQTTHandler:
             while not mqtt_connected and mqtt_attempts < 3:
                 try:
                     mqtt_attempts += 1
-                    logging.info(f"Connecting to MQTT broker (attempt {mqtt_attempts}/3)...")
+                    logging.info(
+                        f"Connecting to MQTT broker (attempt {mqtt_attempts}/3)..."
+                    )
                     self.mqtt_client.connect(self.broker, self.port, 60)
                     self.mqtt_client.loop_start()  # Start background loop
                     mqtt_connected = True
                     logging.info("MQTT broker connection established")
                 except Exception as e:
-                    logging.error(f"MQTT connection attempt {mqtt_attempts} failed: {e}")
+                    logging.error(
+                        f"MQTT connection attempt {mqtt_attempts} failed: {e}"
+                    )
                     if mqtt_attempts < 3:
                         time.sleep(5)
-            
+
             if not mqtt_connected:
                 raise Exception("Failed to connect to MQTT broker after 3 attempts")
 
@@ -720,22 +752,26 @@ class MeshtasticMQTTHandler:
         # Use existing channel from packet if available, otherwise fallback to default
         channel_idx = packet_dict.get("channel")
         if channel_idx is None:
-             channel_idx = self.channel_num
-        
+            channel_idx = self.channel_num
+
         out_packet["channel_num"] = channel_idx
 
         # Inject channelName if available
         if channel_idx is not None:
-             # Lazy Refresh: If channel name is missing, try to refresh the map
-             if channel_idx not in self.channel_map:
-                 logging.info(f"Channel Index {channel_idx} not found in map. Refreshing map...")
-                 self.channel_map = self.get_channel_map()
-                 
-             if channel_idx in self.channel_map:
-                 out_packet["channelName"] = self.channel_map[channel_idx]
-                 logging.debug(f"Injected channelName '{out_packet['channelName']}' for index {channel_idx}")
-             else:
-                 logging.debug(f"No name found for channel index {channel_idx}")
+            # Lazy Refresh: If channel name is missing, try to refresh the map
+            if channel_idx not in self.channel_map:
+                logging.info(
+                    f"Channel Index {channel_idx} not found in map. Refreshing map..."
+                )
+                self.channel_map = self.get_channel_map()
+
+            if channel_idx in self.channel_map:
+                out_packet["channelName"] = self.channel_map[channel_idx]
+                logging.debug(
+                    f"Injected channelName '{out_packet['channelName']}' for index {channel_idx}"
+                )
+            else:
+                logging.debug(f"No name found for channel index {channel_idx}")
 
         self.publish_dict_to_mqtt(out_packet)
 
@@ -775,7 +811,10 @@ class MeshtasticMQTTHandler:
         interface = self.connection_manager.get_interface()
         gateway_id = None
         try:
-            if hasattr(self.connection_manager, "connected_node_id") and self.connection_manager.connected_node_id:
+            if (
+                hasattr(self.connection_manager, "connected_node_id")
+                and self.connection_manager.connected_node_id
+            ):
                 gateway_id = self.connection_manager.connected_node_id
             elif interface:
                 node_info = interface.getMyNodeInfo()
@@ -789,7 +828,9 @@ class MeshtasticMQTTHandler:
         if from_id != gateway_id:
             return
 
-        decoded = packet_dict.get("decoded", {}) if isinstance(packet_dict, dict) else {}
+        decoded = (
+            packet_dict.get("decoded", {}) if isinstance(packet_dict, dict) else {}
+        )
         text = self._extract_text_from_decoded(decoded)
         if not text:
             return
@@ -808,7 +849,9 @@ class MeshtasticMQTTHandler:
             packet_id_val = packet_dict.get("id")
             rx_time = packet_dict.get("rxTime", now_ts)
             envelope_packet = {
-                "id": packet_id_val if isinstance(packet_id_val, int) else self._next_meshtastic_packet_id(),
+                "id": packet_id_val
+                if isinstance(packet_id_val, int)
+                else self._next_meshtastic_packet_id(),
                 "fromId": from_id,
                 "toId": to_id,
                 "rxTime": rx_time,
@@ -904,7 +947,7 @@ class MeshtasticMQTTHandler:
 
         # Publish the JSON payload to the specified topic
         self.mqtt_client.publish(topic_node, payload_json)
-        
+
         # Update web interface packet counter if available
         if self.web_interface:
             self.web_interface.increment_packet_count()
@@ -975,6 +1018,14 @@ if __name__ == "__main__":
         envvar="NODE_IP",
         required=False,
         help="Node IP address (required for TCP connections)",
+    )
+    parser.add_argument(
+        "--node-port",
+        type=int,
+        default=4403,
+        action=EnvDefault,
+        envvar="NODE_PORT",
+        help="Node port (default: 4403)",
     )
     parser.add_argument(
         "--serial-port",
@@ -1072,6 +1123,7 @@ if __name__ == "__main__":
             args.username,
             args.password,
             args.node_ip,
+            args.node_port,
             args.serial_port,
             args.connection_type,
             args.traceroute_cooldown,

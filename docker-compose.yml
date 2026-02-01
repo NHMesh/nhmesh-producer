@@ -10,6 +10,7 @@ services:
     environment:
       # Required environment variables
       - NODE_IP=${NODE_IP:-192.168.1.100}
+      - NODE_PORT=${NODE_PORT:-4403}
       - MQTT_USERNAME=${MQTT_USERNAME}
       - MQTT_PASSWORD=${MQTT_PASSWORD}
 

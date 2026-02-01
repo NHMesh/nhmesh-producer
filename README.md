@@ -21,6 +21,7 @@ For information about contributing to this project, see [CONTRIBUTING.md](CONTRI
 docker run -d \
     --name nhmesh-producer \
     -e NODE_IP=192.168.1.100 \
+    -e NODE_PORT=4403 \
     -e MQTT_ENDPOINT=mqtt.nhmesh.live \
     -e MQTT_USERNAME=your_username \
     -e MQTT_PASSWORD=your_password \
@@ -37,6 +38,7 @@ docker run -d \
 | `MQTT_USERNAME`               | -                            | MQTT username for authentication                                      |
 | `MQTT_PASSWORD`               | -                            | MQTT password for authentication                                      |
 | `NODE_IP`                     | -                            | IP address of the Meshtastic node to connect to (TCP connections)     |
+| `NODE_PORT`                   | `4403`                       | Port of the Meshtastic node (TCP connections)                         |
 | `SERIAL_PORT`                 | -                            | Serial port for direct USB connection (serial connections)            |
 | `CONNECTION_TYPE`             | `tcp`                        | Connection type: `tcp` or `serial`                                    |
 | `MQTT_TOPIC`                  | `msh/US/NH/`                 | Root MQTT topic for publishing messages                               |

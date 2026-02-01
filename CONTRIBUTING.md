@@ -84,6 +84,7 @@ docker build -t nhmesh-producer .
 docker run -d \
     --name nhmesh-producer \
     -e NODE_IP=192.168.1.100 \
+    -e NODE_PORT=4403 \
     -e MQTT_USERNAME=your_username \
     -e MQTT_PASSWORD=your_password \
     -p 5001:5001 \

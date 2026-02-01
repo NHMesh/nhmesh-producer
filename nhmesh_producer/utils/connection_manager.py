@@ -18,6 +18,7 @@ class ConnectionManager:
     def __init__(
         self,
         node_ip: str | None = None,
+        node_port: int = 4403,
         serial_port: str | None = None,
         connection_type: str = "tcp",  # "tcp" or "serial"
         reconnect_attempts: int = 5,
@@ -26,6 +27,7 @@ class ConnectionManager:
         packet_timeout: int = 60,  # Reconnect if no packets received for 60 seconds
     ) -> None:
         self.node_ip = node_ip
+        self.node_port = node_port
         self.serial_port = serial_port
         self.connection_type = connection_type.lower()
         self.reconnect_attempts = reconnect_attempts
@@ -56,9 +58,11 @@ class ConnectionManager:
         # Validate connection parameters
         if self.connection_type == "tcp" and not self.node_ip:
             raise ValueError("node_ip is required for TCP connections")
-        elif self.connection_type == "serial" and not self.serial_port:
+        if self.connection_type == "tcp" and not (1 <= self.node_port <= 65535):
+            raise ValueError("node_port must be between 1 and 65535")
+        if self.connection_type == "serial" and not self.serial_port:
             raise ValueError("serial_port is required for serial connections")
-        elif self.connection_type not in ["tcp", "serial"]:
+        if self.connection_type not in ["tcp", "serial"]:
             raise ValueError("connection_type must be 'tcp' or 'serial'")
 
         # Don't start health monitoring until after initial connection
@@ -144,9 +148,11 @@ class ConnectionManager:
                 self._close_interface_safely()
 
                 if self.connection_type == "tcp" and self.node_ip:
-                    logging.info(f"Connecting to Meshtastic node at {self.node_ip}")
+                    logging.info(
+                        f"Connecting to Meshtastic node at {self.node_ip}:{self.node_port}"
+                    )
                     self.interface = meshtastic.tcp_interface.TCPInterface(
-                        hostname=self.node_ip
+                        hostname=self.node_ip, portNumber=self.node_port
                     )
                     logging.info(f"TCPInterface created successfully: {self.interface}")
 
@@ -189,13 +195,15 @@ class ConnectionManager:
                 )  # Update last connection time on successful connection
 
                 logging.info(f"Successfully connected to node {self.connected_node_id}")
-                
+
                 # Start health monitor after first successful connection
                 if self.health_thread is None or not self.health_thread.is_alive():
                     logging.info("Starting health monitor thread...")
-                    self.health_thread = threading.Thread(target=self._health_monitor, daemon=True)
+                    self.health_thread = threading.Thread(
+                        target=self._health_monitor, daemon=True
+                    )
                     self.health_thread.start()
-                
+
                 return True
 
             except Exception as e:
@@ -549,6 +557,7 @@ class ConnectionManager:
         with self.lock:
             info = {
                 "node_ip": self.node_ip,
+                "node_port": self.node_port,
                 "serial_port": self.serial_port,
                 "connection_type": self.connection_type,
                 "connected": self.connected,

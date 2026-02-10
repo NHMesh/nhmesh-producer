@@ -714,7 +714,7 @@ class MeshtasticMQTTHandler:
                 out_packet["gatewayId"] = "unknown"
 
         out_packet["source"] = "rf"
-        out_packet["modem_preset"] = self.modem_preset
+        out_packet["gateway_modem_preset"] = self.modem_preset
 
         # Determine correct channel index
         # Use existing channel from packet if available, otherwise fallback to default

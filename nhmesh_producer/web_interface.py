@@ -256,6 +256,140 @@ class WebInterface:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        # --- Remote Admin Endpoints ---
+        # These use interface.getNode(nodeId) to send admin messages over the mesh.
+
+        def _get_remote_node(node_id: str):
+            """Helper: get interface and remote Node object, or raise."""
+            interface = self.handler.connection_manager.get_interface()
+            if not interface:
+                return None, None
+            try:
+                node = interface.getNode(node_id, requestChannels=False)
+                return interface, node
+            except Exception as e:
+                logging.error(f"Failed to get remote node {node_id}: {e}")
+                return interface, None
+
+        @self.app.route("/api/nodes/<node_id>/reboot", methods=["POST"])
+        def reboot_node(node_id):
+            """Reboot a remote node over the mesh admin channel."""
+            interface, node = _get_remote_node(node_id)
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+            if not node:
+                return jsonify({"error": f"Node {node_id} not found"}), 404
+
+            try:
+                node.reboot()
+                return jsonify({
+                    "result_type": "OK",
+                    "node": node_id,
+                    "action": "reboot",
+                })
+            except Exception as e:
+                return jsonify({"result_type": "ERROR", "error": str(e)}), 500
+
+        @self.app.route("/api/nodes/<node_id>/shutdown", methods=["POST"])
+        def shutdown_node(node_id):
+            """Shutdown a remote node over the mesh admin channel."""
+            interface, node = _get_remote_node(node_id)
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+            if not node:
+                return jsonify({"error": f"Node {node_id} not found"}), 404
+
+            try:
+                node.shutdown()
+                return jsonify({
+                    "result_type": "OK",
+                    "node": node_id,
+                    "action": "shutdown",
+                })
+            except Exception as e:
+                return jsonify({"result_type": "ERROR", "error": str(e)}), 500
+
+        @self.app.route("/api/nodes/<node_id>/metadata")
+        def node_metadata(node_id):
+            """Get firmware/hardware metadata from a remote node."""
+            interface, node = _get_remote_node(node_id)
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+            if not node:
+                return jsonify({"error": f"Node {node_id} not found"}), 404
+
+            try:
+                metadata = node.getMetadata()
+                if metadata:
+                    return jsonify({
+                        "node": node_id,
+                        "firmware_version": getattr(metadata, "firmware_version", None),
+                        "device_state_version": getattr(metadata, "device_state_version", None),
+                        "canShutdown": getattr(metadata, "canShutdown", None),
+                        "hasWifi": getattr(metadata, "hasWifi", None),
+                        "hasBluetooth": getattr(metadata, "hasBluetooth", None),
+                        "hasEthernet": getattr(metadata, "hasEthernet", None),
+                        "role": getattr(metadata, "role", None),
+                        "hw_model": getattr(metadata, "hw_model", None),
+                    })
+                return jsonify({"node": node_id, "metadata": None})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/nodes/<node_id>/factory-reset", methods=["POST"])
+        def factory_reset_node(node_id):
+            """Factory reset a remote node. DESTRUCTIVE — erases all config."""
+            interface, node = _get_remote_node(node_id)
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+            if not node:
+                return jsonify({"error": f"Node {node_id} not found"}), 404
+
+            try:
+                node.factoryReset()
+                return jsonify({
+                    "result_type": "OK",
+                    "node": node_id,
+                    "action": "factory_reset",
+                })
+            except Exception as e:
+                return jsonify({"result_type": "ERROR", "error": str(e)}), 500
+
+        @self.app.route("/api/nodes/<node_id>/position", methods=["POST"])
+        def set_node_position(node_id):
+            """Set fixed position on a remote node."""
+            from flask import request
+
+            data = request.get_json(silent=True)
+            if not data:
+                return jsonify({"error": "JSON body required"}), 400
+
+            lat = data.get("latitude")
+            lon = data.get("longitude")
+            alt = data.get("altitude", 0)
+
+            if lat is None or lon is None:
+                return jsonify({"error": "latitude and longitude required"}), 400
+
+            interface, node = _get_remote_node(node_id)
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+            if not node:
+                return jsonify({"error": f"Node {node_id} not found"}), 404
+
+            try:
+                node.setFixedPosition(lat, lon, alt)
+                return jsonify({
+                    "result_type": "OK",
+                    "node": node_id,
+                    "action": "set_position",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "altitude": alt,
+                })
+            except Exception as e:
+                return jsonify({"result_type": "ERROR", "error": str(e)}), 500
+
     def increment_packet_count(self) -> None:
         """Increment the packet counter (call this when packet is published)"""
         self.packets_published += 1

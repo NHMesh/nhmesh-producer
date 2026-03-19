@@ -291,16 +291,17 @@ class WebInterface:
             """Send a text message via Meshtastic.
 
             JSON body: {"text": "...", "channel": 0, "to": "!hexid"}
+            Response matches MeshCore gateway format.
             """
             from flask import request
 
             data = request.get_json(silent=True)
             if not data:
-                return jsonify({"status": "error", "error": "JSON body required"}), 400
+                return jsonify({"error": "JSON body required"}), 400
 
             text = data.get("text", "")
             if not text:
-                return jsonify({"status": "error", "error": "'text' field required"}), 400
+                return jsonify({"error": "'text' field required"}), 400
 
             channel_index = int(data.get("channel", 0))
             destination_id = data.get("to") or None
@@ -311,12 +312,22 @@ class WebInterface:
                 destination_id=destination_id,
             )
 
+            # Normalize to MeshCore format: {channel, text, result_type}
+            channel_name = result.get("channel", f"ch{channel_index}")
+            response = {
+                "channel": channel_name,
+                "text": text,
+                "result_type": "OK" if result.get("status") == "sent" else "ERROR",
+            }
+            if result.get("status") != "sent":
+                response["error"] = result.get("error", "unknown")
+
             status_code = 200 if result.get("status") == "sent" else 500
-            return jsonify(result), status_code
+            return jsonify(response), status_code
 
         @self.app.route("/api/device")
         def device_info():
-            """Device info: name, ID, hardware, firmware, battery, position."""
+            """Device info — normalized to match MeshCore gateway /api/device format."""
             interface = self.handler.connection_manager.get_interface()
             if not interface:
                 return jsonify({"error": "No Meshtastic interface"}), 503
@@ -327,13 +338,11 @@ class WebInterface:
                 position = my_info.get("position", {}) if isinstance(my_info, dict) else {}
                 device_metrics = my_info.get("deviceMetrics", {}) if isinstance(my_info, dict) else {}
 
-                # Handle protobuf objects that don't support .get()
                 def safe_get(obj, key, default=None):
                     if isinstance(obj, dict):
                         return obj.get(key, default)
                     return getattr(obj, key, default)
 
-                # Firmware version from metadata or interface
                 fw_version = "unknown"
                 try:
                     if hasattr(interface, "metadata") and interface.metadata:
@@ -341,34 +350,27 @@ class WebInterface:
                 except Exception:
                     pass
 
-                pos_data = None
-                if position:
-                    pos_data = {
-                        "latitude": safe_get(position, "latitude"),
-                        "longitude": safe_get(position, "longitude"),
-                        "altitude": safe_get(position, "altitude"),
-                        "time": safe_get(position, "time"),
-                    }
-
-                battery_data = None
-                if device_metrics:
-                    battery_data = {
-                        "level": safe_get(device_metrics, "batteryLevel"),
-                        "voltage": safe_get(device_metrics, "voltage"),
-                    }
-
+                # Normalized structure matching MeshCore: device_info + self_info
                 return jsonify({
-                    "node_id": safe_get(user, "id"),
-                    "long_name": safe_get(user, "longName"),
-                    "short_name": safe_get(user, "shortName"),
-                    "hardware_model": safe_get(user, "hwModel"),
-                    "firmware_version": fw_version,
-                    "mac_address": safe_get(user, "macaddr"),
-                    "position": pos_data,
-                    "battery": battery_data,
-                    "modem_preset": self.handler.modem_preset,
-                    "channel_num": self.handler.channel_num,
-                    "connection_type": self.handler.connection_type,
+                    "protocol": "meshtastic",
+                    "device_info": {
+                        "model": safe_get(user, "hwModel", "Unknown"),
+                        "ver": fw_version,
+                        "mac_address": safe_get(user, "macaddr"),
+                        "connection_type": self.handler.connection_type,
+                        "modem_preset": self.handler.modem_preset,
+                        "channel_num": self.handler.channel_num,
+                        "battery_level": safe_get(device_metrics, "batteryLevel") if device_metrics else None,
+                        "voltage": safe_get(device_metrics, "voltage") if device_metrics else None,
+                    },
+                    "self_info": {
+                        "name": safe_get(user, "longName", "Unknown"),
+                        "short_name": safe_get(user, "shortName"),
+                        "node_id": safe_get(user, "id"),
+                        "adv_lat": safe_get(position, "latitude") if position else None,
+                        "adv_lon": safe_get(position, "longitude") if position else None,
+                        "altitude": safe_get(position, "altitude") if position else None,
+                    },
                     "uptime_seconds": int(time.time() - self.start_time),
                 })
             except Exception as e:
@@ -376,7 +378,7 @@ class WebInterface:
 
         @self.app.route("/api/channels")
         def channels():
-            """Channel configuration list."""
+            """Channel list — flat array matching MeshCore gateway /api/channels format."""
             interface = self.handler.connection_manager.get_interface()
             if not interface:
                 return jsonify({"error": "No Meshtastic interface"}), 503
@@ -387,21 +389,18 @@ class WebInterface:
                     for ch in interface.localNode.channels:
                         if hasattr(ch, "settings") and ch.settings:
                             role_val = ch.role if hasattr(ch, "role") else 0
-                            # role: 0=DISABLED, 1=PRIMARY, 2=SECONDARY
                             role_name = {0: "DISABLED", 1: "PRIMARY", 2: "SECONDARY"}.get(role_val, str(role_val))
                             channel_list.append({
                                 "index": ch.index,
                                 "name": ch.settings.name or (
                                     self.handler.modem_preset if ch.index == 0 else f"ch{ch.index}"
                                 ),
+                                "has_secret": bool(ch.settings.psk) and len(ch.settings.psk) > 0,
                                 "role": role_name,
-                                "psk_length": len(ch.settings.psk) if ch.settings.psk else 0,
                             })
 
-                return jsonify({
-                    "channels": channel_list,
-                    "channel_map": self.handler.channel_map,
-                })
+                # Return flat array like MeshCore gateway
+                return jsonify(channel_list)
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 

@@ -17,3 +17,8 @@ A standalone, resilient MQTT producer for Meshtastic. It acts as a bridge, conne
 - This component is the "Edge" of the infrastructure, talking to the radio hardware.
 - It was likely extracted from a larger monolith to ensure stability.
 - Critical for getting data *out* of the air and *into* the broker.
+
+## Deployment
+- **Method**: Ansible
+- **Playbook**: `homelab-automation/ansible/playbooks/raspberry-pi-deploy-nhmesh-producer.yml`
+- **Target**: Raspberry Pi (`raspberry_pi` group in `hosts.ini`)

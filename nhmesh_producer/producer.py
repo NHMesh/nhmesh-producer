@@ -352,39 +352,71 @@ class MeshtasticMQTTHandler:
         except Exception as e:
             logging.error(f"Error handling MQTT message: {e}")
 
-    def _send_message_via_meshtastic(self, message_data: dict[str, Any]) -> None:
-        """Send a message via the Meshtastic TCP connection"""
+    def send_text(
+        self,
+        text: str,
+        channel_index: int = 0,
+        destination_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a text message via the Meshtastic interface.
+
+        Args:
+            text: Message text to send.
+            channel_index: Channel index to send on (default: 0).
+            destination_id: Optional destination node ID (e.g. '!abcd1234'). Broadcast if None.
+
+        Returns:
+            dict with 'status' ('sent' | 'error') and detail fields.
+        """
+        interface = self.connection_manager.get_interface()
+        if not interface:
+            return {"status": "error", "error": "No Meshtastic interface available"}
+
+        if not text:
+            return {"status": "error", "error": "No text content provided"}
+
         try:
-            # Get the interface
-            interface = self.connection_manager.get_interface()
-            if not interface:
-                logging.error("No Meshtastic interface available for sending message")
-                return
+            logging.info(
+                f"Sending message via Meshtastic: '{text[:50]}' ch={channel_index} to='{destination_id or 'broadcast'}'"
+            )
 
-            # Extract message details
-            text = message_data.get("text", "")
-            to_id = message_data.get("to", "")
-
-            if not text:
-                logging.error("No text content found in message data")
-                return
-
-            logging.info(f"Sending message via Meshtastic: '{text}' to '{to_id}'")
-
-            # Send the message via Meshtastic
-            if to_id:
-                # Send to specific node
-                interface.sendText(text, channelIndex=0, destinationId=to_id)
-                interface.sendText(text, channelIndex=1, destinationId=to_id)
+            if destination_id:
+                interface.sendText(text, channelIndex=channel_index, destinationId=destination_id)
             else:
-                # Broadcast message
-                interface.sendText(text, channelIndex=0)
-                interface.sendText(text, channelIndex=1)
+                interface.sendText(text, channelIndex=channel_index)
 
             logging.info("Message sent successfully via Meshtastic")
 
+            # Resolve channel name
+            channel_name = self.channel_map.get(channel_index, f"ch{channel_index}")
+
+            return {
+                "status": "sent",
+                "text": text,
+                "channel": channel_name,
+                "channel_index": channel_index,
+                "to": destination_id or "broadcast",
+            }
         except Exception as e:
             logging.error(f"Failed to send message via Meshtastic: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _send_message_via_meshtastic(self, message_data: dict[str, Any]) -> None:
+        """Send a message via the Meshtastic TCP connection (MQTT callback wrapper)."""
+        text = message_data.get("text", "")
+        to_id = message_data.get("to", "") or None
+        channel = message_data.get("channel", None)
+
+        if channel is not None:
+            self.send_text(text, channel_index=int(channel), destination_id=to_id)
+        else:
+            # Legacy behavior: send on channels 0 and 1
+            if to_id:
+                self.send_text(text, channel_index=0, destination_id=to_id)
+                self.send_text(text, channel_index=1, destination_id=to_id)
+            else:
+                self.send_text(text, channel_index=0)
+                self.send_text(text, channel_index=1)
 
     def _record_pending_sent(self, message_data: dict[str, Any]) -> None:
         """Record a pending sent message to correlate with a self-heard RF packet.

@@ -286,6 +286,169 @@ class WebInterface:
             """Detailed connection information endpoint"""
             return jsonify(self.handler.connection_manager.get_connection_info())
 
+        @self.app.route("/api/message", methods=["POST"])
+        def send_message():
+            """Send a text message via Meshtastic.
+
+            JSON body: {"text": "...", "channel": 0, "to": "!hexid"}
+            """
+            from flask import request
+
+            data = request.get_json(silent=True)
+            if not data:
+                return jsonify({"status": "error", "error": "JSON body required"}), 400
+
+            text = data.get("text", "")
+            if not text:
+                return jsonify({"status": "error", "error": "'text' field required"}), 400
+
+            channel_index = int(data.get("channel", 0))
+            destination_id = data.get("to") or None
+
+            result = self.handler.send_text(
+                text=text,
+                channel_index=channel_index,
+                destination_id=destination_id,
+            )
+
+            status_code = 200 if result.get("status") == "sent" else 500
+            return jsonify(result), status_code
+
+        @self.app.route("/api/device")
+        def device_info():
+            """Device info: name, ID, hardware, firmware, battery, position."""
+            interface = self.handler.connection_manager.get_interface()
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+
+            try:
+                my_info = interface.getMyNodeInfo() or {}
+                user = my_info.get("user", {}) if isinstance(my_info, dict) else {}
+                position = my_info.get("position", {}) if isinstance(my_info, dict) else {}
+                device_metrics = my_info.get("deviceMetrics", {}) if isinstance(my_info, dict) else {}
+
+                # Handle protobuf objects that don't support .get()
+                def safe_get(obj, key, default=None):
+                    if isinstance(obj, dict):
+                        return obj.get(key, default)
+                    return getattr(obj, key, default)
+
+                # Firmware version from metadata or interface
+                fw_version = "unknown"
+                try:
+                    if hasattr(interface, "metadata") and interface.metadata:
+                        fw_version = getattr(interface.metadata, "firmware_version", "unknown")
+                except Exception:
+                    pass
+
+                pos_data = None
+                if position:
+                    pos_data = {
+                        "latitude": safe_get(position, "latitude"),
+                        "longitude": safe_get(position, "longitude"),
+                        "altitude": safe_get(position, "altitude"),
+                        "time": safe_get(position, "time"),
+                    }
+
+                battery_data = None
+                if device_metrics:
+                    battery_data = {
+                        "level": safe_get(device_metrics, "batteryLevel"),
+                        "voltage": safe_get(device_metrics, "voltage"),
+                    }
+
+                return jsonify({
+                    "node_id": safe_get(user, "id"),
+                    "long_name": safe_get(user, "longName"),
+                    "short_name": safe_get(user, "shortName"),
+                    "hardware_model": safe_get(user, "hwModel"),
+                    "firmware_version": fw_version,
+                    "mac_address": safe_get(user, "macaddr"),
+                    "position": pos_data,
+                    "battery": battery_data,
+                    "modem_preset": self.handler.modem_preset,
+                    "channel_num": self.handler.channel_num,
+                    "connection_type": self.handler.connection_type,
+                    "uptime_seconds": int(time.time() - self.start_time),
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/channels")
+        def channels():
+            """Channel configuration list."""
+            interface = self.handler.connection_manager.get_interface()
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+
+            try:
+                channel_list = []
+                if interface.localNode and interface.localNode.channels:
+                    for ch in interface.localNode.channels:
+                        if hasattr(ch, "settings") and ch.settings:
+                            role_val = ch.role if hasattr(ch, "role") else 0
+                            # role: 0=DISABLED, 1=PRIMARY, 2=SECONDARY
+                            role_name = {0: "DISABLED", 1: "PRIMARY", 2: "SECONDARY"}.get(role_val, str(role_val))
+                            channel_list.append({
+                                "index": ch.index,
+                                "name": ch.settings.name or (
+                                    self.handler.modem_preset if ch.index == 0 else f"ch{ch.index}"
+                                ),
+                                "role": role_name,
+                                "psk_length": len(ch.settings.psk) if ch.settings.psk else 0,
+                            })
+
+                return jsonify({
+                    "channels": channel_list,
+                    "channel_map": self.handler.channel_map,
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/nodes")
+        def nodes():
+            """Mesh node database from the connected radio."""
+            interface = self.handler.connection_manager.get_interface()
+            if not interface:
+                return jsonify({"error": "No Meshtastic interface"}), 503
+
+            try:
+                node_list = []
+                nodes_dict = interface.nodes or {}
+                for node_id, node_data in nodes_dict.items():
+                    user = node_data.get("user", {})
+                    position = node_data.get("position", {})
+                    snr = node_data.get("snr")
+                    last_heard = node_data.get("lastHeard")
+
+                    node_list.append({
+                        "id": user.get("id", node_id),
+                        "long_name": user.get("longName"),
+                        "short_name": user.get("shortName"),
+                        "hardware_model": user.get("hwModel"),
+                        "snr": snr,
+                        "last_heard": last_heard,
+                        "position": {
+                            "latitude": position.get("latitude"),
+                            "longitude": position.get("longitude"),
+                            "altitude": position.get("altitude"),
+                        } if position else None,
+                        "hops_away": node_data.get("hopsAway"),
+                    })
+
+                # Sort by last_heard descending (most recent first)
+                node_list.sort(
+                    key=lambda n: n.get("last_heard") or 0,
+                    reverse=True,
+                )
+
+                return jsonify({
+                    "node_count": len(node_list),
+                    "nodes": node_list,
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
     def increment_packet_count(self) -> None:
         """Increment the packet counter (call this when packet is published)"""
         self.packets_published += 1

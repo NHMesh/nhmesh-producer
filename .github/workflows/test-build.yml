@@ -95,7 +95,7 @@ jobs:
         run: poetry install --no-interaction --extras dev
         
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         
       - name: Test Docker build (single platform)
         run: |

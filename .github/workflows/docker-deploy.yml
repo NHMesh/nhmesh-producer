@@ -48,7 +48,7 @@ jobs:
             type=ref,event=pr
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Get current date
         id: date

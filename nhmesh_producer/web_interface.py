@@ -2,12 +2,22 @@
 API-only interface for nhmesh-producer.
 """
 
+import hmac
 import logging
+import os
 import threading
 import time
 from typing import Any
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
+
+from nhmesh_producer import fleet_contract as fc
+
+# Bearer token for every route except the healthcheck. The API includes remote
+# admin (reboot/shutdown/factory-reset/config of mesh nodes), so once it is
+# reachable beyond the container it must not be open. Unset = open (logged).
+API_TOKEN = os.environ.get("API_TOKEN", "")
+OPEN_PATHS = frozenset({"/api/health"})
 
 
 class WebInterface:
@@ -27,6 +37,18 @@ class WebInterface:
 
     def _setup_routes(self) -> None:
         """Setup Flask API routes"""
+        if not API_TOKEN:
+            logging.warning("API_TOKEN not set: producer API (incl. remote admin) is UNAUTHENTICATED")
+
+        @self.app.before_request
+        def require_token():
+            if API_TOKEN and request.path not in OPEN_PATHS:
+                supplied = request.headers.get("Authorization", "")
+                if not hmac.compare_digest(supplied.encode(), f"Bearer {API_TOKEN}".encode()):
+                    return jsonify({"detail": "unauthorized"}), 401
+            return None
+
+        self._setup_fleet_routes()
 
         @self.app.route("/api/stats")
         def stats():
@@ -262,6 +284,8 @@ class WebInterface:
             interface = self.handler.connection_manager.get_interface()
             if not interface:
                 return None, None
+            if node_id == "self":  # shared contract: "self" = this producer's radio
+                return interface, interface.localNode
             try:
                 node = interface.getNode(node_id, requestChannels=False)
                 return interface, node
@@ -392,6 +416,67 @@ class WebInterface:
         """Increment the packet counter (call this when packet is published)"""
         self.packets_published += 1
         self.last_packet_time = time.time()
+
+    def _setup_fleet_routes(self) -> None:
+        """Shared mesh-fleet contract (same paths/keys as nhmesh-meshcore-gateway)."""
+
+        def iface_or_503():
+            interface = self.handler.connection_manager.get_interface()
+            if not interface:
+                return None, (jsonify({"error": "No Meshtastic interface"}), 503)
+            return interface, None
+
+        def envelope(node: str, action: str, **kw):
+            return jsonify({"result_type": kw.pop("result_type", "OK"), "node": node, "action": action, **kw})
+
+        @self.app.route("/api/nodes/<node>/config", methods=["GET"])
+        def fleet_get_config(node):
+            interface, err = iface_or_503()
+            if err:
+                return err
+            try:
+                n = fc.resolve(interface, node)
+                return envelope(node, "get_config", config=fc.read_config(n))
+            except fc.NeedsAdminKey as e:
+                return envelope(node, "get_config", result_type="NEEDS_ADMIN_KEY", error=str(e)), 403
+            except TimeoutError as e:
+                return envelope(node, "get_config", result_type="TIMEOUT", error=str(e)), 504
+
+        @self.app.route("/api/nodes/<node>/config", methods=["PUT"])
+        def fleet_set_config(node):
+            interface, err = iface_or_503()
+            if err:
+                return err
+            update = request.get_json(silent=True) or {}
+            try:
+                n = fc.resolve(interface, node)
+                applied = fc.write_config(n, update, fc.REMOTE_TIMEOUT)
+                # region/preset changes make the radio reboot itself
+                reboot = bool({"region", "modem_preset"} & set(update))
+                return envelope(node, "set_config", applied=applied, reboot_required=reboot)
+            except ValueError as e:
+                return envelope(node, "set_config", result_type="ERROR", error=str(e)), 400
+            except fc.NeedsAdminKey as e:
+                return envelope(node, "set_config", result_type="NEEDS_ADMIN_KEY", error=str(e)), 403
+            except TimeoutError as e:
+                return envelope(node, "set_config", result_type="TIMEOUT", error=str(e)), 504
+
+        @self.app.route("/api/nodes/<node>/status", methods=["GET"])
+        def fleet_status(node):
+            interface, err = iface_or_503()
+            if err:
+                return err
+            st = fc.node_status(interface, node)
+            reachable = node == "self" or st.get("last_heard") is not None
+            return envelope(node, "status", reachable=reachable, status=st)
+
+        @self.app.route("/api/nodes/<node>/ping", methods=["POST"])
+        def fleet_ping(node):
+            interface, err = iface_or_503()
+            if err:
+                return err
+            ok = fc.ping(interface, node)
+            return envelope(node, "ping", result_type="OK" if ok else "UNREACHABLE", reachable=ok)
 
     def start(self) -> None:
         """Start the web interface in a separate thread"""

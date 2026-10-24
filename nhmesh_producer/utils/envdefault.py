@@ -10,7 +10,9 @@ class EnvDefault(argparse.Action):
         if envvar:
             if envvar in os.environ:
                 default = os.environ[envvar]
-        if required and default:
+        # Only required when there is no default at all. `if default:` made any
+        # falsy default (False, 0, "") mandatory - e.g. --tls with default False.
+        if required and default is not None:
             required = False
         super().__init__(default=default, required=required, **kwargs)
 

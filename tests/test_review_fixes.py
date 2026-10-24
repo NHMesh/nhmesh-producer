@@ -142,3 +142,32 @@ class TestHandler(HandlerTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestEnvDefault(unittest.TestCase):
+    """The --tls crash-loop (2026-10-24): a falsy default made the flag required."""
+
+    def _parser(self):
+        from nhmesh_producer.utils.envdefault import EnvDefault
+
+        p = argparse.ArgumentParser()
+        p.add_argument("--tls", type=str2bool, default=False, action=EnvDefault, envvar="T_TLS")
+        p.add_argument("--port", type=int, default=0, action=EnvDefault, envvar="T_PORT")
+        p.add_argument("--user", action=EnvDefault, envvar="T_USER")
+        return p
+
+    def test_falsy_defaults_are_not_required(self):
+        with patch.dict("os.environ", {}, clear=True):
+            args = self._parser().parse_args(["--user", "u"])
+        self.assertFalse(args.tls)
+        self.assertEqual(args.port, 0)
+
+    def test_env_value_is_type_converted(self):
+        with patch.dict("os.environ", {"T_TLS": "false", "T_USER": "u"}, clear=True):
+            self.assertFalse(self._parser().parse_args([]).tls)
+
+    def test_no_default_still_required(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(SystemExit):
+                self._parser().parse_args([])

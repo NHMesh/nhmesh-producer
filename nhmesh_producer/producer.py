@@ -9,9 +9,9 @@ import argparse
 import atexit
 import base64
 import json
-import random
 import logging
 import os
+import random
 import signal
 import sys
 import threading
@@ -21,7 +21,7 @@ from typing import Any
 
 import paho.mqtt.client as mqtt
 from google.protobuf import json_format
-from meshtastic.protobuf import mesh_pb2
+from meshtastic.protobuf import config_pb2, mesh_pb2
 from pubsub import pub
 
 from nhmesh_producer.utils.connection_manager import ConnectionManager
@@ -35,6 +35,52 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     stream=sys.stdout,
 )
+
+
+# Packets buffered by paho while the broker is unreachable (QoS 1). Beyond this,
+# publish() returns MQTT_ERR_QUEUE_SIZE and the packet is dropped (and logged).
+MQTT_MAX_QUEUED = 5000
+
+# Initial Meshtastic connection: attempts and base backoff before giving up and
+# exiting (the container's restart policy then takes over).
+INITIAL_CONNECT_ATTEMPTS = 5
+INITIAL_CONNECT_BACKOFF_SEC = 5
+
+
+def modem_preset_name(preset: int) -> str:
+    """Map a LoRa ModemPreset enum value to its app-style name, e.g. 4 -> 'MediumFast'.
+
+    Previously only LONG_FAST and MEDIUM_FAST were recognised and every other
+    preset was reported as 'Unknown'.
+    """
+    try:
+        enum_name = config_pb2.Config.LoRaConfig.ModemPreset.Name(preset)
+    except ValueError:
+        return "Unknown"
+    return "".join(part.capitalize() for part in enum_name.split("_"))
+
+
+def str2bool(value: str | bool) -> bool:
+    """argparse/env-safe boolean: bool('false') is True, so parse explicitly."""
+    if isinstance(value, bool):
+        return value
+    v = value.strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off", ""):
+        return False
+    raise argparse.ArgumentTypeError(f"expected a boolean, got {value!r}")
+
+
+def node_topic_id(payload: dict[str, Any]) -> str:
+    """Topic suffix for a packet: its fromId, else the hex of its numeric 'from'."""
+    from_id = payload.get("fromId")
+    if from_id:
+        return str(from_id)
+    from_num = payload.get("from")
+    if isinstance(from_num, int):
+        return f"!{from_num:08x}"
+    return "unknown"
 
 
 class MeshtasticMQTTHandler:
@@ -77,7 +123,7 @@ class MeshtasticMQTTHandler:
         traceroute_persistence_file: str = "/tmp/traceroute_state.json",
         mqtt_listen_topic: str | None = None,
         web_interface_enabled: bool = True,
-        web_host: str = "0.0.0.0",
+        web_host: str = "127.0.0.1",
         web_port: int = 5001,
     ) -> None:
         """
@@ -114,7 +160,12 @@ class MeshtasticMQTTHandler:
         else:
             raise ValueError("connection_type must be 'tcp' or 'serial'")
 
-        # Get interface and check if it's available
+        # Open the Meshtastic connection exactly once. (Previously get_interface()
+        # opened it as a side effect and connect() then closed and reopened it while
+        # the first reader thread was still shutting down, which garbled the serial
+        # stream for the first minute after every start.)
+        self._shutdown_event = threading.Event()  # Thread-safe shutdown signal
+        self._connect_meshtastic_with_retry()
         interface = self.connection_manager.get_interface()
         if interface is None:
             raise Exception("Failed to get Meshtastic interface")
@@ -122,13 +173,7 @@ class MeshtasticMQTTHandler:
         # Get LoRa configuration with null checks
         try:
             self.lora_config = interface.localNode.localConfig.lora
-            self.modem_preset = (
-                "LongFast"
-                if self.lora_config.modem_preset == 0
-                else "MediumFast"
-                if self.lora_config.modem_preset == 4
-                else "Unknown"
-            )
+            self.modem_preset = modem_preset_name(self.lora_config.modem_preset)
             self.channel_num = self.lora_config.channel_num
         except AttributeError as e:
             logging.warning(f"Failed to get LoRa configuration: {e}")
@@ -140,12 +185,18 @@ class MeshtasticMQTTHandler:
         # Build channel map (retry a few times if empty? or just once)
         self.channel_map = self.get_channel_map()
 
-        # MQTT client setup with callbacks
-        self.mqtt_client = mqtt.Client()
+        # MQTT client (paho v2 callback API). paho's network loop owns reconnection
+        # with backoff, indefinitely; QoS 1 + a bounded queue rides out broker blips
+        # instead of silently dropping packets while disconnected.
+        self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if self.username and self.password:
             self.mqtt_client.username_pw_set(
                 username=self.username, password=self.password
             )
+        if self.tls:
+            self.mqtt_client.tls_set()
+        self.mqtt_client.reconnect_delay_set(min_delay=1, max_delay=120)
+        self.mqtt_client.max_queued_messages_set(MQTT_MAX_QUEUED)
         self.mqtt_client.on_connect = self._on_mqtt_connect
         self.mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self.mqtt_client.on_publish = self._on_mqtt_publish
@@ -153,10 +204,7 @@ class MeshtasticMQTTHandler:
 
         # MQTT connection state
         self.mqtt_connected = False
-        self.mqtt_reconnect_attempts = 0
-        self.max_mqtt_reconnect_attempts = 5
-        self._shutdown_event = threading.Event()  # Thread-safe shutdown signal
-        
+
         # Packet ID generation (Meshtastic-like 32-bit counter seeded randomly)
         self._packet_id_lock = threading.Lock()
         self._packet_id_counter = random.randint(0, 0x0FFFFFFF)
@@ -165,10 +213,6 @@ class MeshtasticMQTTHandler:
         self._pending_lock = threading.Lock()
         self._pending_sent: dict[tuple[str, str | None], float] = {}
         self._pending_timeout_sec = 2.0
-
-        # Initialize Meshtastic connection
-        if not self.connection_manager.connect():
-            raise Exception("Failed to establish initial Meshtastic connection")
 
         # --- Node Cache and Traceroute Daemon Feature ---
         # Get interface for NodeCache and TracerouteManager initialization
@@ -223,6 +267,26 @@ class MeshtasticMQTTHandler:
         # Register cleanup handlers
         atexit.register(self.cleanup)
 
+    def _connect_meshtastic_with_retry(self) -> None:
+        """Open the initial Meshtastic connection, retrying with backoff.
+
+        A node that was just flashed or replugged can take several seconds before
+        it answers; failing the whole process on the first attempt turned that
+        into a container restart loop.
+        """
+        for attempt in range(1, INITIAL_CONNECT_ATTEMPTS + 1):
+            if self.connection_manager.connect():
+                return
+            if attempt == INITIAL_CONNECT_ATTEMPTS:
+                break
+            delay = INITIAL_CONNECT_BACKOFF_SEC * attempt
+            logging.warning(
+                f"Initial Meshtastic connection attempt {attempt}/{INITIAL_CONNECT_ATTEMPTS} failed; retrying in {delay}s"
+            )
+            if self._shutdown_event.wait(timeout=delay):
+                break
+        raise Exception("Failed to establish initial Meshtastic connection")
+
     def _next_meshtastic_packet_id(self) -> int:
         """Return next 32-bit packet ID similar to Meshtastic behavior.
 
@@ -268,14 +332,21 @@ class MeshtasticMQTTHandler:
             logging.warning(f"Failed to build channel map: {e}")
         return channel_map
 
-    def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
-        """Callback for MQTT connection"""
-        if rc == 0:
+    def _on_mqtt_connect(
+        self,
+        client: Any,
+        userdata: Any,
+        flags: Any,
+        reason_code: Any,
+        properties: Any = None,
+    ) -> None:
+        """Callback for MQTT connection (paho v2 API)"""
+        if not reason_code.is_failure:
             self.mqtt_connected = True
-            self.mqtt_reconnect_attempts = 0
             logging.info("Connected to MQTT broker")
 
-            # Subscribe to listen topic if specified
+            # (Re)subscribe on every connect: subscriptions don't survive a
+            # reconnect with a clean session.
             if self.mqtt_listen_topic:
                 try:
                     client.subscribe(self.mqtt_listen_topic)
@@ -287,39 +358,49 @@ class MeshtasticMQTTHandler:
                         f"Failed to subscribe to MQTT topic {self.mqtt_listen_topic}: {e}"
                     )
         else:
-            logging.error(f"Failed to connect to MQTT broker: {rc}")
+            self.mqtt_connected = False
+            logging.error(f"Failed to connect to MQTT broker: {reason_code}")
 
-    def _on_mqtt_disconnect(self, client: Any, userdata: Any, rc: int) -> None:
-        """Callback for MQTT disconnection with automatic reconnection"""
+    def _on_mqtt_disconnect(
+        self,
+        client: Any,
+        userdata: Any,
+        flags: Any,
+        reason_code: Any,
+        properties: Any = None,
+    ) -> None:
+        """Callback for MQTT disconnection.
+
+        Reconnection is handled by paho's network loop (reconnect_delay_set, no
+        attempt cap). The old handler also spawned its own reconnect() threads,
+        which raced the loop and stopped trying after 5 attempts.
+        """
         self.mqtt_connected = False
-        if rc != 0:
-            # Unexpected disconnect
-            logging.warning(f"Unexpected disconnect from MQTT broker (code: {rc}), will auto-reconnect")
-            self.mqtt_reconnect_attempts += 1
-            
-            if self.mqtt_reconnect_attempts <= self.max_mqtt_reconnect_attempts:
-                # Schedule reconnection in background
-                def reconnect_mqtt():
-                    delay = min(5 * (2 ** (self.mqtt_reconnect_attempts - 1)), 60)  # Exponential backoff, max 60s
-                    logging.info(f"Attempting MQTT reconnection in {delay}s (attempt {self.mqtt_reconnect_attempts}/{self.max_mqtt_reconnect_attempts})")
-                    time.sleep(delay)
-                    if not self._shutdown_event.is_set():
-                        try:
-                            client.reconnect()
-                            logging.info("MQTT reconnection successful")
-                        except Exception as e:
-                            logging.error(f"MQTT reconnection failed: {e}")
-                
-                threading.Thread(target=reconnect_mqtt, daemon=True).start()
-            else:
-                logging.error(f"Max MQTT reconnection attempts ({self.max_mqtt_reconnect_attempts}) reached")
+        if reason_code.is_failure:
+            logging.warning(
+                f"Unexpected disconnect from MQTT broker ({reason_code}); paho will reconnect with backoff"
+            )
         else:
-            # Clean disconnect
             logging.info("Cleanly disconnected from MQTT broker")
 
-    def _on_mqtt_publish(self, client: Any, userdata: Any, mid: int) -> None:
+    def _on_mqtt_publish(
+        self,
+        client: Any,
+        userdata: Any,
+        mid: int,
+        reason_code: Any = None,
+        properties: Any = None,
+    ) -> None:
         """Callback for MQTT publish"""
         logging.debug(f"Message published: {mid}")
+
+    def _publish(self, topic: str, payload_json: str) -> None:
+        """Publish at QoS 1 so paho queues while the broker is unreachable."""
+        info = self.mqtt_client.publish(topic, payload_json, qos=1)
+        if info.rc not in (mqtt.MQTT_ERR_SUCCESS, mqtt.MQTT_ERR_NO_CONN):
+            logging.error(
+                f"MQTT publish to '{topic}' failed: {mqtt.error_string(info.rc)}"
+            )
 
     def _on_mqtt_message(self, client: Any, userdata: Any, msg: Any) -> None:
         """Callback for MQTT message reception"""
@@ -538,7 +619,7 @@ class MeshtasticMQTTHandler:
         logging.info(
             f"Publishing sent text echo for collector: topic='{topic_node}' from='{gateway_id}' to='{to_id}'"
         )
-        self.mqtt_client.publish(topic_node, payload_json)
+        self._publish(topic_node, payload_json)
 
     def _update_interface_references(self) -> None:
         """Update interface references in NodeCache and TracerouteManager after reconnection"""
@@ -565,6 +646,11 @@ class MeshtasticMQTTHandler:
         is_new_node = self.node_cache.update_from_packet(
             packet, self.traceroute_manager
         )
+
+        # Never traceroute our own gateway node: it's zero hops away, and the job
+        # only costs airtime and a slot behind the global cooldown.
+        if node_id == self.connection_manager.connected_node_id:
+            return
 
         # Delegate traceroute queueing logic to TracerouteManager
         self.traceroute_manager.process_packet_for_traceroutes(node_id, is_new_node)
@@ -622,24 +708,13 @@ class MeshtasticMQTTHandler:
                 # Don't call reconnect() here - it would close the working connection!
                 # The health monitor thread will handle reconnection if needed
 
-            # Connect to MQTT broker with retry logic
-            mqtt_connected = False
-            mqtt_attempts = 0
-            while not mqtt_connected and mqtt_attempts < 3:
-                try:
-                    mqtt_attempts += 1
-                    logging.info(f"Connecting to MQTT broker (attempt {mqtt_attempts}/3)...")
-                    self.mqtt_client.connect(self.broker, self.port, 60)
-                    self.mqtt_client.loop_start()  # Start background loop
-                    mqtt_connected = True
-                    logging.info("MQTT broker connection established")
-                except Exception as e:
-                    logging.error(f"MQTT connection attempt {mqtt_attempts} failed: {e}")
-                    if mqtt_attempts < 3:
-                        time.sleep(5)
-            
-            if not mqtt_connected:
-                raise Exception("Failed to connect to MQTT broker after 3 attempts")
+            # Connect to the MQTT broker without blocking. connect_async + loop_start
+            # keeps retrying with backoff until it gets through, so a broker that is
+            # down (or whose DNS is mid-update) at startup no longer kills the process
+            # after 3 attempts.
+            logging.info(f"Connecting to MQTT broker {self.broker}:{self.port}...")
+            self.mqtt_client.connect_async(self.broker, self.port, keepalive=60)
+            self.mqtt_client.loop_start()
 
             # Keep main thread alive but interruptible
             logging.info("Starting main loop, waiting for shutdown signal...")
@@ -859,7 +934,7 @@ class MeshtasticMQTTHandler:
             logging.info(
                 f"Publishing matched sent text echo (real id) for collector: topic='{topic_node}' id='{envelope_packet['id']}'"
             )
-            self.mqtt_client.publish(topic_node, payload_json)
+            self._publish(topic_node, payload_json)
         except Exception as e:
             logging.error(f"Failed to publish matched echo for collector: {e}")
 
@@ -927,15 +1002,14 @@ class MeshtasticMQTTHandler:
             payload (dict): The dictionary payload to publish.
         """
 
-        topic_node = f"{self.topic}/{payload['fromId']}"
+        sender = node_topic_id(payload)
+        topic_node = f"{self.topic}/{sender}"
         payload_json = json.dumps(payload, default=str)
 
-        logging.info(
-            f"Publishing packet from '{payload['fromId']}' to MQTT topic '{topic_node}'"
-        )
+        logging.info(f"Publishing packet from '{sender}' to MQTT topic '{topic_node}'")
 
         # Publish the JSON payload to the specified topic
-        self.mqtt_client.publish(topic_node, payload_json)
+        self._publish(topic_node, payload_json)
         
         # Update web interface packet counter if available
         if self.web_interface:
@@ -994,7 +1068,14 @@ if __name__ == "__main__":
         envvar="MQTT_TOPIC",
         help="Root topic",
     )
-    parser.add_argument("--tls", type=bool, default=False, help="Enable TLS/SSL")
+    parser.add_argument(
+        "--tls",
+        type=str2bool,
+        default=False,
+        action=EnvDefault,
+        envvar="MQTT_TLS",
+        help="Enable TLS/SSL to the MQTT broker (default: false)",
+    )
     parser.add_argument(
         "--username", action=EnvDefault, envvar="MQTT_USERNAME", help="MQTT username"
     )
@@ -1072,7 +1153,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--web-interface-enabled",
-        type=bool,
+        type=str2bool,
         default=True,
         action=EnvDefault,
         envvar="WEB_INTERFACE_ENABLED",
@@ -1080,10 +1161,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--web-host",
-        default="0.0.0.0",
+        default="127.0.0.1",
         action=EnvDefault,
         envvar="WEB_HOST",
-        help="Web interface host (default: 0.0.0.0)",
+        help="Web interface host (default: 127.0.0.1). The API includes unauthenticated "
+        "remote-admin endpoints (reboot/shutdown/factory-reset mesh nodes), so only "
+        "bind 0.0.0.0 on a trusted network.",
     )
     parser.add_argument(
         "--web-port",

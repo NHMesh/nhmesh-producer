@@ -47,5 +47,12 @@ COPY ./nhmesh_producer /app/nhmesh_producer
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Healthy = Meshtastic node AND MQTT broker connected (see /api/health).
+# Uses python, not curl: the alpine image has no curl. Requires the web
+# interface (WEB_INTERFACE_ENABLED, default true); start_period covers the
+# node's initial config download.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "import os,urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('WEB_PORT','5001'), timeout=8); sys.exit(0)" || exit 1
+
 # Command to run the application as a module
 CMD ["python", "-m", "nhmesh_producer.producer"]

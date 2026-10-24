@@ -587,8 +587,7 @@ class ConnectionManager:
                 "last_heartbeat": self.last_heartbeat,
                 "last_packet_time": self.last_packet_time,
                 "packet_timeout": self.packet_timeout,
-                "health_monitor_alive": hasattr(self, "health_thread")
-                and self.health_thread.is_alive(),
+                "health_monitor_alive": self.is_health_monitor_working(),
                 "stop_event_set": self.stop_event.is_set(),
                 "interface_exists": self.interface is not None,
                 "connected_node_id": self.connected_node_id,
@@ -611,7 +610,7 @@ class ConnectionManager:
 
     def is_health_monitor_working(self) -> bool:
         """Check if the health monitor thread is alive and working"""
-        return hasattr(self, "health_thread") and self.health_thread.is_alive()
+        return self.health_thread is not None and self.health_thread.is_alive()
 
     def is_packet_timeout_expired(self) -> bool:
         """Check if the packet timeout has expired (no packets received for packet_timeout seconds)"""
@@ -645,10 +644,17 @@ class ConnectionManager:
             self.reconnect(skip_lock=True)
 
     def get_interface(self) -> Any | None:
-        """Get the current interface, reconnecting if necessary"""
+        """Return the current interface, or None while disconnected.
+
+        Deliberately does NOT reconnect: callers include the MQTT network thread
+        and Flask request threads, and a blocking reconnect there (up to 5
+        attempts with 5-80 s backoff) stalls MQTT keepalives. It also opened a
+        second SerialInterface at startup while the first was still being torn
+        down, garbling the serial stream. Reconnection is owned by the health
+        monitor; the initial connection by connect().
+        """
         if not self.is_connected():
-            if not self.reconnect():
-                return None
+            return None
         return self.interface
 
     def close(self) -> None:
@@ -657,7 +663,7 @@ class ConnectionManager:
         self.stop_event.set()
 
         # Wait for health monitor thread to finish
-        if hasattr(self, "health_thread") and self.health_thread.is_alive():
+        if self.health_thread is not None and self.health_thread.is_alive():
             logging.info("Waiting for health monitor thread to finish...")
             self.health_thread.join(timeout=2.0)  # 2 second timeout
             if self.health_thread.is_alive():

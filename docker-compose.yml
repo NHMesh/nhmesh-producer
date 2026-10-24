@@ -6,7 +6,7 @@ services:
     container_name: nhmesh-producer
     restart: unless-stopped
     ports:
-      - "5001:5001" # Web interface
+      - "127.0.0.1:5001:5001" # Web API: localhost only (it has unauthenticated remote-admin endpoints)
     environment:
       # Required environment variables
       - NODE_IP=${NODE_IP:-192.168.1.100}
@@ -17,7 +17,7 @@ services:
       - MQTT_ENDPOINT=${MQTT_ENDPOINT:-mqtt.nhmesh.live}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - MQTT_TOPIC=${MQTT_TOPIC:-msh/US/NH/}
-      - MQTT_LISTEN_TOPIC=${MQTT_LISTEN_TOPIC:-msh/US/NH/#}
+      - MQTT_LISTEN_TOPIC=${MQTT_LISTEN_TOPIC:-msh/US/NH/send} # NOT msh/US/NH/# — that subscribes to the whole broker
       - WEB_HOST=${WEB_HOST:-0.0.0.0}
       - WEB_PORT=${WEB_PORT:-5001}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -30,7 +30,7 @@ services:
     networks:
       - nhmesh-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/api/health', timeout=8)"]
       interval: 30s
       timeout: 10s
       retries: 3

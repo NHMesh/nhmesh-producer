@@ -72,22 +72,20 @@ class WebInterface:
 
         @self.app.route("/api/health")
         def health():
-            """Simple health check endpoint (Docker healthcheck compatible)"""
-            is_healthy = self.handler.connection_manager.is_connected()
-
-            if is_healthy:
-                return jsonify({"status": "healthy", "timestamp": time.time()}), 200
-            else:
-                return (
-                    jsonify(
-                        {
-                            "status": "unhealthy",
-                            "timestamp": time.time(),
-                            "reason": "Meshtastic not connected",
-                        }
-                    ),
-                    503,
-                )
+            """Health check (Docker healthcheck compatible): radio AND broker."""
+            mesh_ok = self.handler.connection_manager.is_connected()
+            mqtt_ok = bool(getattr(self.handler, "mqtt_connected", False))
+            body = {
+                "status": "healthy" if (mesh_ok and mqtt_ok) else "unhealthy",
+                "timestamp": time.time(),
+                "meshtastic_connected": mesh_ok,
+                "mqtt_connected": mqtt_ok,
+            }
+            if not mesh_ok:
+                body["reason"] = "Meshtastic not connected"
+            elif not mqtt_ok:
+                body["reason"] = "MQTT broker not connected"
+            return jsonify(body), (200 if mesh_ok and mqtt_ok else 503)
 
         @self.app.route("/api/connection")
         def connection():

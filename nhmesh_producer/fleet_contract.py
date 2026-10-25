@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
-from meshtastic.protobuf import config_pb2
+from meshtastic.protobuf import config_pb2, portnums_pb2, telemetry_pb2
 
 LORA = config_pb2.Config.LoRaConfig
 DEVICE = config_pb2.Config.DeviceConfig
@@ -124,12 +125,76 @@ def write_config(n: Any, update: dict[str, Any], timeout: float) -> dict[str, st
     return applied
 
 
-def node_status(interface: Any, node: str) -> dict[str, Any]:
-    """Last-heard view from the local node DB (no RF round trip; use ping for that)."""
+# Remote device telemetry. Many nodes never broadcast it (the tree LF node sent none in
+# 8 h on 2026-10-25), so the node DB's deviceMetrics can be any age and carry no
+# timestamp. A telemetry REQUEST needs no admin key; it's asked at most hourly per node,
+# and only of nodes heard recently, so a dead site costs no airtime.
+TELEMETRY_EVERY = 3600.0
+TELEMETRY_IF_HEARD_WITHIN = 6 * 3600.0
+_telemetry: dict[str, dict[str, Any]] = {}  # node id -> {"at", "metrics"} or {"at", "error"}
+_telemetry_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _node_lock(node: str) -> threading.Lock:
+    # Per node: one node's 45 s request must not stall status calls for the others.
+    with _locks_guard:
+        return _telemetry_locks.setdefault(node, threading.Lock())
+
+
+def request_telemetry(interface: Any, node: str, timeout: float = REMOTE_TIMEOUT) -> dict[str, Any]:
+    """Ask a remote node for its device metrics and wait for the reply (camelCase keys)."""
+    got: dict[str, Any] = {}
+    done = threading.Event()
+
+    def on_response(packet: dict[str, Any]) -> None:
+        decoded = packet.get("decoded", {})
+        metrics = (decoded.get("telemetry") or {}).get("deviceMetrics")
+        if metrics is not None:  # a routing NAK also lands here; keep waiting for metrics
+            got.update(metrics)
+            done.set()
+
+    req = telemetry_pb2.Telemetry()
+    req.device_metrics.CopyFrom(telemetry_pb2.DeviceMetrics())
+    interface.sendData(req, destinationId=node, portNum=portnums_pb2.PortNum.TELEMETRY_APP,
+                       wantResponse=True, onResponse=on_response, channelIndex=0)
+    if not done.wait(timeout):
+        raise TimeoutError(f"no telemetry from {node} within {timeout:.0f}s")
+    return got
+
+
+def _fresh_telemetry(interface: Any, node: str, last_heard: float | None, now: float) -> dict[str, Any] | None:
+    with _node_lock(node):
+        cached = _telemetry.get(node)
+        due = cached is None or now - cached["at"] >= TELEMETRY_EVERY
+        heard = last_heard is not None and now - last_heard <= TELEMETRY_IF_HEARD_WITHIN
+        if not (due and heard):
+            return cached
+        try:
+            entry = {"at": now, "metrics": request_telemetry(interface, node)}
+        except Exception as e:  # cached too, so a silent node isn't re-asked every poll
+            logging.info(f"[fleet] telemetry {node}: {e}")
+            entry = {"at": now, "error": str(e)}
+        _telemetry[node] = entry
+        return entry
+
+
+def node_status(interface: Any, node: str, now: Callable[[], float] = time.time) -> dict[str, Any]:
+    """Last-heard view from the local node DB, plus hourly-requested telemetry for remote nodes.
+
+    telemetry_time is when voltage/battery were actually measured: the request time for a
+    remote node, None when only an undated node-DB value exists.
+    """
     my_id = (interface.getMyNodeInfo() or {}).get("user", {}).get("id")
     node_id = my_id if node == "self" else node
     entry = (interface.nodes or {}).get(node_id) or {}
-    metrics = entry.get("deviceMetrics", {})
+    metrics = dict(entry.get("deviceMetrics", {}))
+    telemetry_time = entry.get("lastHeard") if node == "self" else None  # own radio: local
+    if node != "self":
+        t = _fresh_telemetry(interface, node_id, entry.get("lastHeard"), now())
+        if t and "metrics" in t:
+            metrics.update(t["metrics"])
+            telemetry_time = int(t["at"])
     return {
         "node_id": node_id,
         "last_heard": entry.get("lastHeard"),
@@ -138,6 +203,7 @@ def node_status(interface: Any, node: str) -> dict[str, Any]:
         "battery_level": metrics.get("batteryLevel"),
         "voltage": metrics.get("voltage"),
         "uptime_seconds": metrics.get("uptimeSeconds"),
+        "telemetry_time": telemetry_time,
     }
 
 

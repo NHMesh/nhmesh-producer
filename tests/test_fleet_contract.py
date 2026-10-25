@@ -72,3 +72,49 @@ class TestRoutes(unittest.TestCase):
             ok = self.client.get("/api/nodes/self/config", headers={"Authorization": "Bearer t0k"})
             self.assertEqual(ok.status_code, 200)
             self.assertNotEqual(self.client.get("/api/health").status_code, 401)
+
+
+class TestTelemetry(unittest.TestCase):
+    def setUp(self):
+        fc._telemetry.clear()
+        self.iface = MagicMock()
+        self.iface.getMyNodeInfo.return_value = {"user": {"id": "!7c5ccbd0"}}
+        self.iface.nodes = {"!2b24a8d9": {"lastHeard": 1000.0, "deviceMetrics": {"voltage": 3.9, "batteryLevel": 80}}}
+
+    def status(self, now):
+        return fc.node_status(self.iface, "!2b24a8d9", now=lambda: now)
+
+    def test_requests_hourly_and_dates_the_reading(self):
+        with patch.object(fc, "request_telemetry", return_value={"voltage": 3.64, "batteryLevel": 41}) as req:
+            st = self.status(1100.0)
+            self.assertEqual((st["voltage"], st["battery_level"], st["telemetry_time"]), (3.64, 41, 1100))
+            self.status(1100.0 + 1800)       # within the hour: cached, no new request
+            self.assertEqual(req.call_count, 1)
+            self.iface.nodes["!2b24a8d9"]["lastHeard"] = 1100.0 + 3600
+            self.status(1100.0 + 3700)       # an hour later: asks again
+            self.assertEqual(req.call_count, 2)
+
+    def test_undated_node_db_value_has_no_telemetry_time(self):
+        with patch.object(fc, "request_telemetry", side_effect=TimeoutError("no reply")):
+            st = self.status(1100.0)
+        self.assertEqual(st["voltage"], 3.9)
+        self.assertIsNone(st["telemetry_time"])
+
+    def test_never_asks_a_node_not_heard_recently(self):
+        with patch.object(fc, "request_telemetry") as req:
+            self.status(1000.0 + 7 * 3600)
+        req.assert_not_called()
+
+    def test_a_failed_request_is_not_retried_every_poll(self):
+        with patch.object(fc, "request_telemetry", side_effect=TimeoutError("no reply")) as req:
+            self.status(1100.0)
+            self.status(1220.0)
+        self.assertEqual(req.call_count, 1)
+
+    def test_request_waits_for_metrics_not_a_routing_reply(self):
+        iface = MagicMock()
+        def send(*a, **kw):
+            kw["onResponse"]({"decoded": {"portnum": "ROUTING_APP"}})
+            kw["onResponse"]({"decoded": {"telemetry": {"deviceMetrics": {"voltage": 3.7}}}})
+        iface.sendData.side_effect = send
+        self.assertEqual(fc.request_telemetry(iface, "!2b24a8d9", timeout=1), {"voltage": 3.7})
